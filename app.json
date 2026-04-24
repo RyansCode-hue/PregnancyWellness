@@ -2,7 +2,7 @@
   "expo": {
     "name": "Pregnancy Wellness",
     "slug": "PregnancyWellness",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.github.ryanscodehue.pregnancywellness"
+      "package": "com.github.ryanscodehue.pregnancywellness",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"

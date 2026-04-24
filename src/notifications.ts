@@ -41,44 +41,36 @@ export async function requestPermissions(): Promise<boolean> {
   return finalStatus === 'granted';
 }
 
+function clampHour(h: number): number {
+  return Math.max(0, Math.min(23, Math.floor(h)));
+}
+function clampMinute(m: number): number {
+  return Math.max(0, Math.min(59, Math.floor(m)));
+}
+
 export async function scheduleReminders(settings: AppSettings): Promise<void> {
   // Cancel all existing notifications first
   await Notifications.cancelAllScheduledNotificationsAsync();
 
-  if (!settings.remindersEnabled) return;
+  if (!settings.remindersEnabled || settings.reminders.length === 0) return;
 
   const hasPermission = await requestPermissions();
   if (!hasPermission) return;
 
-  const name = settings.partnerName || 'there';
-
-  // Schedule morning reminder at 8:00 AM daily
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Good morning!',
-      body: `Hey ${name}, remember to take your supplements today!`,
-      data: { type: 'morning' },
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour: 8,
-      minute: 0,
-    },
-  });
-
-  // Schedule evening reminder at 8:00 PM daily
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: 'Evening check-in',
-      body: `Hey ${name}, have you taken all your supplements today?`,
-      data: { type: 'evening' },
-    },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DAILY,
-      hour: 20,
-      minute: 0,
-    },
-  });
+  for (const reminder of settings.reminders) {
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: reminder.title || 'Reminder',
+        body: reminder.body,
+        data: { reminderId: reminder.id },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour: clampHour(reminder.hour),
+        minute: clampMinute(reminder.minute),
+      },
+    });
+  }
 }
 
 // Generate a detailed notification body listing what's needed

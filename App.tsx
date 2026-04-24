@@ -16,10 +16,10 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 function AppNavigator() {
   const { colors, isDark, settings } = useTheme();
 
-  // Schedule notifications whenever settings change
+  // Reschedule whenever the reminders list reference changes (added/removed/edited).
   useEffect(() => {
     scheduleReminders(settings);
-  }, [settings.remindersEnabled, settings.partnerName]);
+  }, [settings.remindersEnabled, settings.reminders]);
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),

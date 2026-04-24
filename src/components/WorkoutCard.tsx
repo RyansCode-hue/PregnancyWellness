@@ -19,6 +19,8 @@ interface WorkoutCardProps {
   onLongPress: () => void;
   disabled?: boolean;
   colors: ThemeColors;
+  /** For 'weekly' frequency: completed count this week (Mon-Sun). */
+  weekCount?: number;
 }
 
 export default function WorkoutCard({
@@ -29,15 +31,20 @@ export default function WorkoutCard({
   onLongPress,
   disabled = false,
   colors,
+  weekCount,
 }: WorkoutCardProps) {
   const s = makeStyles(colors);
   const completed = record?.completed || false;
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState(record?.notes || '');
 
-  const daysLabel = workout.assignedDays
-    .map((d) => DAY_NAMES_SHORT[d])
-    .join(', ');
+  const isGoal = workout.frequency === 'weekly';
+  const goal = workout.weeklyGoal ?? 1;
+  const goalMet = isGoal && (weekCount ?? 0) >= goal;
+
+  const daysLabel = isGoal
+    ? `${weekCount ?? 0} of ${goal} this week`
+    : workout.assignedDays.map((d) => DAY_NAMES_SHORT[d]).join(', ');
 
   const handleToggleNotes = () => {
     if (showNotes && notes !== (record?.notes || '')) {
@@ -48,7 +55,7 @@ export default function WorkoutCard({
 
   return (
     <TouchableOpacity
-      style={[s.card, completed && s.cardComplete]}
+      style={[s.card, (completed || goalMet) && s.cardComplete]}
       onLongPress={onLongPress}
       activeOpacity={0.9}
       delayLongPress={500}
@@ -108,9 +115,11 @@ export default function WorkoutCard({
         </Text>
       ) : null}
 
-      {completed && (
+      {(completed || goalMet) && (
         <View style={s.completeBadge}>
-          <Text style={s.completeBadgeText}>Done!</Text>
+          <Text style={s.completeBadgeText}>
+            {goalMet && !completed ? 'Goal reached!' : 'Done!'}
+          </Text>
         </View>
       )}
     </TouchableOpacity>

@@ -449,7 +449,9 @@ export default function WeeklyReportScreen({ navigation }: Props) {
                             <View>
                               <Text style={s.reportItemName}>{w.name}</Text>
                               <Text style={s.reportItemFreq}>
-                                {w.totalDays} day{w.totalDays !== 1 ? 's' : ''} this week
+                                {w.frequency === 'weekly'
+                                  ? `Weekly goal · ${w.totalDays}× per week`
+                                  : `${w.totalDays} day${w.totalDays !== 1 ? 's' : ''} this week`}
                               </Text>
                             </View>
                           </View>

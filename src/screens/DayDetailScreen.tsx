@@ -34,6 +34,7 @@ import {
   getSupplementsForDate,
   getWeeklySupplementDoses,
   getDoseSourceRecord,
+  getWeeklyWorkoutCount,
   groupLinkedSupplements,
   DAY_NAMES_FULL,
 } from '../storage/storage';
@@ -65,6 +66,7 @@ export default function DayDetailScreen({ route, navigation }: Props) {
   const [doseSourceRecord, setDoseSourceRecord] = useState<DoseSourceRecord>({});
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [workoutRecord, setWorkoutRecord] = useState<WorkoutDayRecord>({});
+  const [weeklyWorkoutCounts, setWeeklyWorkoutCounts] = useState<Record<string, number>>({});
   const [undoState, setUndoState] = useState<UndoState | null>(null);
 
   const undoOpacity = useRef(new Animated.Value(0)).current;
@@ -106,8 +108,18 @@ export default function DayDetailScreen({ route, navigation }: Props) {
     setDoseSourceRecord(await getDoseSourceRecord(date));
 
     const allWorkouts = await getWorkouts();
-    setWorkouts(getWorkoutsForDate(allWorkouts, date));
+    const todayWorkouts = getWorkoutsForDate(allWorkouts, date);
+    setWorkouts(todayWorkouts);
     setWorkoutRecord(await getWorkoutDayRecord(date));
+
+    // Weekly counts only matter for goal-frequency workouts
+    const counts: Record<string, number> = {};
+    for (const w of todayWorkouts) {
+      if (w.frequency === 'weekly') {
+        counts[w.id] = await getWeeklyWorkoutCount(w.id, date);
+      }
+    }
+    setWeeklyWorkoutCounts(counts);
   };
 
   // ─── Undo system ───
@@ -148,22 +160,61 @@ export default function DayDetailScreen({ route, navigation }: Props) {
 
   // ─── Supplement handlers ───
 
-  const handleToggleDose = async (
+  const handleToggleDose = (
     supplementId: string,
     doseIndex: number,
     dosesPerDay: number,
     supplementName: string,
   ) => {
+    const tappedSup = supplements.find((s) => s.id === supplementId);
+    const isWeekly = tappedSup?.frequency === 'weekly';
+
+    // Snapshot for undo (deep copy of dayRecord)
     const previousSupRecord: DayRecord = {};
     for (const key of Object.keys(dayRecord)) {
       previousSupRecord[key] = [...dayRecord[key]];
     }
 
-    // Toggle the dose on the current day's record
-    await toggleDose(date, supplementId, doseIndex, dosesPerDay);
+    // Optimistic local update — flip the dose immediately and mirror to linked supplements.
+    // The new value is the negation of the currently-displayed value.
+    const currentDoses = dayRecord[supplementId] || new Array(dosesPerDay).fill(false);
+    const newValue = !currentDoses[doseIndex];
 
-    // Reload to get merged weekly view
-    await loadData();
+    const nextRecord: DayRecord = { ...dayRecord };
+    const nextSources: DoseSourceRecord = { ...doseSourceRecord };
+
+    const applyFlip = (sup: Supplement, mirroredValue: boolean) => {
+      const arr = nextRecord[sup.id] ? [...nextRecord[sup.id]] : new Array(sup.dosesPerDay).fill(false);
+      if (doseIndex < sup.dosesPerDay) {
+        arr[doseIndex] = mirroredValue;
+      }
+      nextRecord[sup.id] = arr;
+
+      const sArr = nextSources[sup.id] ? [...nextSources[sup.id]] : new Array(sup.dosesPerDay).fill(null);
+      if (doseIndex < sup.dosesPerDay) {
+        sArr[doseIndex] = mirroredValue ? supplementId : null;
+      }
+      nextSources[sup.id] = sArr;
+    };
+
+    if (tappedSup) {
+      applyFlip(tappedSup, newValue);
+      for (const linkedId of tappedSup.linkedSupplementIds || []) {
+        const linked = supplements.find((s) => s.id === linkedId);
+        if (linked) applyFlip(linked, newValue);
+      }
+    }
+
+    setDayRecord(nextRecord);
+    setDoseSourceRecord(nextSources);
+
+    // Persist + reconcile in the background. Reconciling matters for weekly supplements
+    // because their displayed checks are merged across all 7 days of the week —
+    // the local flip might not reflect the merged truth (e.g. dose still checked on another day).
+    void (async () => {
+      await toggleDose(date, supplementId, doseIndex, dosesPerDay);
+      if (isWeekly) await loadData();
+    })();
 
     showUndo({
       type: 'supplement',
@@ -207,8 +258,18 @@ export default function DayDetailScreen({ route, navigation }: Props) {
       previousWorkoutRecord[key] = { ...workoutRecord[key] };
     }
 
+    const wasCompleted = !!workoutRecord[workoutId]?.completed;
     const updated = await toggleWorkout(date, workoutId);
     setWorkoutRecord(updated);
+
+    // Keep the displayed week count in sync for goal workouts.
+    const w = workouts.find((x) => x.id === workoutId);
+    if (w?.frequency === 'weekly') {
+      setWeeklyWorkoutCounts((prev) => ({
+        ...prev,
+        [workoutId]: Math.max(0, (prev[workoutId] ?? 0) + (wasCompleted ? -1 : 1)),
+      }));
+    }
 
     showUndo({
       type: 'workout',
@@ -413,6 +474,11 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     onLongPress={() => handleWorkoutLongPress(workout)}
                     disabled={isFuture}
                     colors={colors}
+                    weekCount={
+                      workout.frequency === 'weekly'
+                        ? weeklyWorkoutCounts[workout.id] ?? 0
+                        : undefined
+                    }
                   />
                 ))}
               </>

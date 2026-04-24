@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, AppSettings, DEFAULT_SETTINGS } from '../types';
+import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, WorkoutFrequency, AppSettings, ReminderConfig, DEFAULT_SETTINGS } from '../types';
 
 const SUPPLEMENTS_KEY = 'supplements';
 const WORKOUTS_KEY = 'workouts';
@@ -11,10 +11,67 @@ const INSTALL_DATE_KEY = 'app_install_date';
 
 // ─── Settings ───
 
+function newReminderId(): string {
+  return `r_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+}
+
 export async function getSettings(): Promise<AppSettings> {
   const json = await AsyncStorage.getItem(SETTINGS_KEY);
-  if (!json) return { ...DEFAULT_SETTINGS };
-  return { ...DEFAULT_SETTINGS, ...JSON.parse(json) };
+  if (!json) {
+    return { ...DEFAULT_SETTINGS, reminders: DEFAULT_SETTINGS.reminders.map((r) => ({ ...r })) };
+  }
+  const stored: any = JSON.parse(json);
+
+  // Migrate legacy morningReminder/eveningReminder → reminders[]
+  let reminders: ReminderConfig[] | undefined = stored.reminders;
+  if (!Array.isArray(reminders)) {
+    reminders = [];
+    if (stored.morningReminder) {
+      reminders.push({
+        id: 'morning',
+        hour: 8,
+        minute: 0,
+        title: 'Good morning!',
+        body: 'Hey there, remember to take your supplements today!',
+        ...stored.morningReminder,
+      });
+    }
+    if (stored.eveningReminder) {
+      reminders.push({
+        id: 'evening',
+        hour: 20,
+        minute: 0,
+        title: 'Evening check-in',
+        body: 'Have you taken all your supplements today?',
+        ...stored.eveningReminder,
+      });
+    }
+    if (reminders.length === 0) {
+      reminders = DEFAULT_SETTINGS.reminders.map((r) => ({ ...r }));
+    }
+  } else {
+    // Defensive: ensure every reminder has an id
+    reminders = reminders.map((r) => (r.id ? r : { ...r, id: newReminderId() }));
+  }
+
+  // Drop the legacy keys when returning, so they stop round-tripping through saveSettings.
+  const { morningReminder, eveningReminder, ...rest } = stored;
+  return {
+    ...DEFAULT_SETTINGS,
+    ...rest,
+    reminders,
+  };
+}
+
+export function createReminder(partial?: Partial<ReminderConfig>): ReminderConfig {
+  return {
+    id: newReminderId(),
+    hour: 9,
+    minute: 0,
+    title: 'Reminder',
+    body: 'Take your supplements',
+    ...partial,
+  };
 }
 
 export async function saveSettings(settings: AppSettings): Promise<void> {
@@ -167,7 +224,13 @@ export async function getDailyProgress(
 export async function getWorkouts(): Promise<Workout[]> {
   const json = await AsyncStorage.getItem(WORKOUTS_KEY);
   if (!json) return [];
-  return JSON.parse(json);
+  const workouts: Workout[] = JSON.parse(json);
+  // Backfill: workouts saved before frequency existed default to 'days'
+  return workouts.map((w) => ({
+    ...w,
+    frequency: w.frequency || 'days',
+    assignedDays: w.assignedDays || [],
+  }));
 }
 
 export async function saveWorkout(workout: Workout): Promise<void> {
@@ -189,6 +252,8 @@ export async function deleteWorkout(id: string): Promise<void> {
 
 // ─── Workout progress ───
 
+// Per-day progress. Day-assigned workouts contribute 1 to total each.
+// Weekly-goal workouts only contribute when completed today (bonus, not penalty).
 export async function getWorkoutProgress(
   workouts: Workout[],
   dateStr: string,
@@ -198,21 +263,55 @@ export async function getWorkoutProgress(
 
   const record = await getWorkoutDayRecord(dateStr);
   let completed = 0;
+  let total = 0;
   for (const w of todayWorkouts) {
-    if (record[w.id]?.completed) completed++;
+    const isGoal = w.frequency === 'weekly';
+    const done = !!record[w.id]?.completed;
+    if (isGoal) {
+      if (done) {
+        completed++;
+        total++;
+      }
+    } else {
+      total++;
+      if (done) completed++;
+    }
   }
-  return { completed, total: todayWorkouts.length };
+  return { completed, total };
 }
 
 // ─── Workout filtering for a given date ───
-
+// Day-assigned workouts: only on their assigned days.
+// Weekly-goal workouts: shown every day (so the user can log on whichever day).
 export function getWorkoutsForDate(
   workouts: Workout[],
   dateStr: string,
 ): Workout[] {
   const date = parseDate(dateStr);
   const dayOfWeek = date.getDay();
-  return workouts.filter((w) => w.assignedDays.includes(dayOfWeek as any));
+  return workouts.filter((w) => {
+    if (w.frequency === 'weekly') return true;
+    return w.assignedDays.includes(dayOfWeek as any);
+  });
+}
+
+// Count how many days this week (Mon-Sun containing dateStr) the user
+// completed the given weekly-goal workout.
+export async function getWeeklyWorkoutCount(
+  workoutId: string,
+  dateStr: string,
+): Promise<number> {
+  const { start } = getWeekRange(dateStr);
+  const startDate = parseDate(start);
+  let count = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(startDate);
+    d.setDate(startDate.getDate() + i);
+    const ds = formatDate(d);
+    const record = await getWorkoutDayRecord(ds);
+    if (record[workoutId]?.completed) count++;
+  }
+  return count;
 }
 
 // ─── Workout Day Records ───
@@ -374,19 +473,35 @@ export async function getDayCombinedStatus(
     supStatus = allComplete ? 'complete' : 'incomplete';
   }
 
-  // Workout status
-  const relevantWorkouts = getWorkoutsForDate(workouts, date);
+  // Workout status.
+  // Day-assigned workouts drive incomplete/complete (red X if any are missed).
+  // Weekly-goal workouts are bonus: a green check on days you actually did one,
+  // but they never cause a red X on a day where you didn't.
+  const dayAssigned = workouts.filter(
+    (w) => w.frequency === 'days' && w.assignedDays.includes(parseDate(date).getDay() as any),
+  );
+  const goalWorkouts = workouts.filter((w) => w.frequency === 'weekly');
+
   let workoutStatus: DayStatusType = 'none';
-  if (relevantWorkouts.length > 0) {
-    const workoutRecord = await getWorkoutDayRecord(date);
+  const workoutRecord =
+    dayAssigned.length > 0 || goalWorkouts.length > 0
+      ? await getWorkoutDayRecord(date)
+      : {};
+
+  if (dayAssigned.length > 0) {
     let allComplete = true;
-    for (const workout of relevantWorkouts) {
+    for (const workout of dayAssigned) {
       if (!workoutRecord[workout.id]?.completed) {
         allComplete = false;
         break;
       }
     }
     workoutStatus = allComplete ? 'complete' : 'incomplete';
+  }
+
+  // If no day-assigned workouts but a weekly-goal workout was done today, mark green.
+  if (workoutStatus === 'none' && goalWorkouts.some((w) => workoutRecord[w.id]?.completed)) {
+    workoutStatus = 'complete';
   }
 
   return { supplement: supStatus, workout: workoutStatus };
@@ -514,6 +629,8 @@ export interface WeeklyReportWorkoutItem {
   name: string;
   completedDays: number;
   totalDays: number;
+  /** 'days' = scheduled on specific weekdays; 'weekly' = N-times-per-week goal */
+  frequency: WorkoutFrequency;
 }
 
 export interface WeeklyReport {
@@ -684,26 +801,46 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
     }
   }
 
-  // Workouts: for each workout, count how many assigned days were completed
+  // Workouts:
+  //  - 'days' workouts: count how many assigned days were completed
+  //  - 'weekly' goal workouts: count completed days across the whole week, capped at goal
   const workoutItems: WeeklyReportWorkoutItem[] = [];
   for (const workout of workouts) {
-    let completedDays = 0;
-    let totalDays = 0;
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startDate);
-      d.setDate(startDate.getDate() + i);
-      const dayOfWeek = d.getDay();
-      if (workout.assignedDays.includes(dayOfWeek as any)) {
-        totalDays++;
+    if (workout.frequency === 'weekly') {
+      const goal = workout.weeklyGoal ?? 1;
+      let completedDays = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
         const ds = formatDate(d);
         const record = await getWorkoutDayRecord(ds);
-        if (record[workout.id]?.completed) {
-          completedDays++;
+        if (record[workout.id]?.completed) completedDays++;
+      }
+      workoutItems.push({
+        name: workout.name,
+        completedDays: Math.min(completedDays, goal),
+        totalDays: goal,
+        frequency: 'weekly',
+      });
+    } else {
+      let completedDays = 0;
+      let totalDays = 0;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
+        const dayOfWeek = d.getDay();
+        if (workout.assignedDays.includes(dayOfWeek as any)) {
+          totalDays++;
+          const ds = formatDate(d);
+          const record = await getWorkoutDayRecord(ds);
+          if (record[workout.id]?.completed) {
+            completedDays++;
+          }
         }
       }
-    }
-    if (totalDays > 0) {
-      workoutItems.push({ name: workout.name, completedDays, totalDays });
+      if (totalDays > 0) {
+        workoutItems.push({ name: workout.name, completedDays, totalDays, frequency: 'days' });
+      }
     }
   }
 

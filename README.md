@@ -77,3 +77,18 @@ This project uses [EAS Build](https://docs.expo.dev/build/introduction/) for pro
 npx eas build --platform android
 npx eas build --platform ios
 ```
+
+## Shipping an Android Update
+
+The Android app is currently distributed as a sideloaded APK (the `preview` profile in `eas.json`). Each new release goes out in this sequence:
+
+1. **Bump the version** in `app.json` — increment `expo.version` (e.g. `1.0.1` → `1.0.2`) **and** `expo.android.versionCode` (must increase, otherwise Android refuses the install).
+2. **Commit and push** the changes to GitHub. Pushing does not trigger a build — it just stores the source.
+3. **Build the APK** in the cloud:
+   ```bash
+   npx eas build --platform android --profile preview
+   ```
+   First time only: run `npx eas login` and accept the prompt to generate an Android keystore. EAS stores it for the project.
+4. **Install on the device.** When the build finishes, EAS prints a download URL. Open it on the Android device, download the APK, and tap it to install. The same keystore is used every build, so the install runs as an update and **AsyncStorage data is preserved**.
+
+> ⚠️ Don't rotate the EAS Android keystore. A different signing key will force you to uninstall the existing app first, which wipes all locally stored supplements, workouts, and day records.

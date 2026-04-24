@@ -13,10 +13,14 @@ export interface Supplement {
   createdAt: string;
 }
 
+export type WorkoutFrequency = 'days' | 'weekly';
+
 export interface Workout {
   id: string;
   name: string;
-  assignedDays: DayOfWeek[]; // which days of the week
+  frequency: WorkoutFrequency;
+  assignedDays: DayOfWeek[]; // used when frequency === 'days'
+  weeklyGoal?: number; // used when frequency === 'weekly' (e.g. 3 = "3 times any day this week")
   createdAt: string;
 }
 
@@ -38,17 +42,42 @@ export interface WorkoutDayRecord {
   };
 }
 
+export interface ReminderConfig {
+  id: string;
+  hour: number; // 0-23
+  minute: number; // 0-59
+  title: string;
+  body: string;
+}
+
 export interface AppSettings {
   dueDate?: string; // ISO date string (YYYY-MM-DD)
   darkMode: boolean;
-  partnerName: string; // e.g. "Amy"
+  partnerName: string; // e.g. "Amy" — used only in default reminder bodies
   remindersEnabled: boolean;
+  reminders: ReminderConfig[];
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   darkMode: false,
   partnerName: 'Amy',
   remindersEnabled: true,
+  reminders: [
+    {
+      id: 'morning',
+      hour: 8,
+      minute: 0,
+      title: 'Good morning!',
+      body: 'Hey Amy, remember to take your supplements today!',
+    },
+    {
+      id: 'evening',
+      hour: 20,
+      minute: 0,
+      title: 'Evening check-in',
+      body: 'Hey Amy, have you taken all your supplements today?',
+    },
+  ],
 };
 
 export type RootStackParamList = {

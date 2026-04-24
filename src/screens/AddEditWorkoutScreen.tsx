@@ -16,7 +16,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import { saveWorkout, DAY_NAMES_SHORT } from '../storage/storage';
-import { RootStackParamList, DayOfWeek } from '../types';
+import { RootStackParamList, DayOfWeek, WorkoutFrequency } from '../types';
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
@@ -31,8 +31,14 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
   const isEditing = !!existing;
 
   const [name, setName] = useState(existing?.name || '');
+  const [frequency, setFrequency] = useState<WorkoutFrequency>(
+    existing?.frequency || 'days'
+  );
   const [assignedDays, setAssignedDays] = useState<DayOfWeek[]>(
     existing?.assignedDays || []
+  );
+  const [weeklyGoal, setWeeklyGoal] = useState<string>(
+    existing?.weeklyGoal ? String(existing.weeklyGoal) : '3'
   );
 
   const toggleDay = (day: DayOfWeek) => {
@@ -49,21 +55,32 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
     setAssignedDays([1, 2, 3, 4, 5]);
   };
 
+  const parsedGoal = Math.max(1, Math.min(7, parseInt(weeklyGoal, 10) || 0));
+  const goalValid = frequency !== 'weekly' || parsedGoal >= 1;
+  const daysValid = frequency !== 'days' || assignedDays.length > 0;
+  const canSave = !!name.trim() && goalValid && daysValid;
+
   const handleSave = async () => {
     const trimmedName = name.trim();
     if (!trimmedName) {
       Alert.alert('Missing Name', 'Please enter a workout name.');
       return;
     }
-    if (assignedDays.length === 0) {
+    if (frequency === 'days' && assignedDays.length === 0) {
       Alert.alert('No Days Selected', 'Please select at least one day for this workout.');
+      return;
+    }
+    if (frequency === 'weekly' && parsedGoal < 1) {
+      Alert.alert('Invalid Goal', 'Please enter a weekly goal between 1 and 7.');
       return;
     }
 
     await saveWorkout({
       id: existing?.id || generateId(),
       name: trimmedName,
-      assignedDays,
+      frequency,
+      assignedDays: frequency === 'days' ? assignedDays : [],
+      weeklyGoal: frequency === 'weekly' ? parsedGoal : undefined,
       createdAt: existing?.createdAt || new Date().toISOString(),
     });
 
@@ -75,6 +92,11 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
     : assignedDays.length === 5 && [1, 2, 3, 4, 5].every((d) => assignedDays.includes(d as DayOfWeek))
       ? 'Weekdays'
       : assignedDays.map((d) => DAY_NAMES_SHORT[d]).join(', ');
+
+  const previewLabel =
+    frequency === 'weekly'
+      ? `${parsedGoal}× per week (any day)`
+      : daysLabel;
 
   return (
     <SafeAreaView style={s.container}>
@@ -112,49 +134,113 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
             />
           </View>
 
-          {/* Assigned Days */}
+          {/* Frequency selector */}
           <View style={s.fieldGroup}>
-            <Text style={s.label}>Which days?</Text>
-
-            {/* Quick select buttons */}
-            <View style={s.quickSelectRow}>
-              <TouchableOpacity style={s.quickButton} onPress={selectWeekdays}>
-                <Text style={s.quickButtonText}>Weekdays</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.quickButton} onPress={selectAllDays}>
-                <Text style={s.quickButtonText}>Every day</Text>
+            <Text style={s.label}>How often?</Text>
+            <View style={s.freqRow}>
+              <TouchableOpacity
+                style={[s.freqOption, frequency === 'days' && s.freqOptionSelected]}
+                onPress={() => setFrequency('days')}
+                activeOpacity={0.8}
+              >
+                <Text style={[s.freqOptionTitle, frequency === 'days' && s.freqOptionTitleSelected]}>
+                  Specific days
+                </Text>
+                <Text style={s.freqOptionSubtitle}>Pick weekdays</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={s.quickButton}
-                onPress={() => setAssignedDays([])}
+                style={[s.freqOption, frequency === 'weekly' && s.freqOptionSelected]}
+                onPress={() => setFrequency('weekly')}
+                activeOpacity={0.8}
               >
-                <Text style={s.quickButtonText}>Clear</Text>
+                <Text style={[s.freqOptionTitle, frequency === 'weekly' && s.freqOptionTitleSelected]}>
+                  Weekly goal
+                </Text>
+                <Text style={s.freqOptionSubtitle}>N times, any day</Text>
               </TouchableOpacity>
-            </View>
-
-            {/* Day chips */}
-            <View style={s.dayRow}>
-              {DAY_NAMES_SHORT.map((dayName, i) => {
-                const selected = assignedDays.includes(i as DayOfWeek);
-                return (
-                  <TouchableOpacity
-                    key={i}
-                    style={[s.dayChip, selected && s.dayChipSelected]}
-                    onPress={() => toggleDay(i as DayOfWeek)}
-                  >
-                    <Text
-                      style={[s.dayChipText, selected && s.dayChipTextSelected]}
-                    >
-                      {dayName}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
             </View>
           </View>
 
+          {/* Assigned Days (only for 'days' frequency) */}
+          {frequency === 'days' && (
+            <View style={s.fieldGroup}>
+              <Text style={s.label}>Which days?</Text>
+
+              {/* Quick select buttons */}
+              <View style={s.quickSelectRow}>
+                <TouchableOpacity style={s.quickButton} onPress={selectWeekdays}>
+                  <Text style={s.quickButtonText}>Weekdays</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.quickButton} onPress={selectAllDays}>
+                  <Text style={s.quickButtonText}>Every day</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={s.quickButton}
+                  onPress={() => setAssignedDays([])}
+                >
+                  <Text style={s.quickButtonText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Day chips */}
+              <View style={s.dayRow}>
+                {DAY_NAMES_SHORT.map((dayName, i) => {
+                  const selected = assignedDays.includes(i as DayOfWeek);
+                  return (
+                    <TouchableOpacity
+                      key={i}
+                      style={[s.dayChip, selected && s.dayChipSelected]}
+                      onPress={() => toggleDay(i as DayOfWeek)}
+                    >
+                      <Text
+                        style={[s.dayChipText, selected && s.dayChipTextSelected]}
+                      >
+                        {dayName}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {/* Weekly goal input */}
+          {frequency === 'weekly' && (
+            <View style={s.fieldGroup}>
+              <Text style={s.label}>How many times per week?</Text>
+              <View style={s.goalRow}>
+                <TouchableOpacity
+                  style={s.goalStep}
+                  onPress={() => setWeeklyGoal(String(Math.max(1, parsedGoal - 1)))}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.goalStepText}>−</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={s.goalInput}
+                  value={weeklyGoal}
+                  onChangeText={(t) => setWeeklyGoal(t.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  selectTextOnFocus
+                />
+                <TouchableOpacity
+                  style={s.goalStep}
+                  onPress={() => setWeeklyGoal(String(Math.min(7, parsedGoal + 1)))}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.goalStepText}>+</Text>
+                </TouchableOpacity>
+                <Text style={s.goalSuffix}>per week</Text>
+              </View>
+              <Text style={s.goalHint}>
+                Shows up every day so you can log it whenever you do it.
+              </Text>
+            </View>
+          )}
+
           {/* Preview */}
-          {name.trim() && assignedDays.length > 0 && (
+          {name.trim() && (frequency === 'weekly' || assignedDays.length > 0) && (
             <View style={s.preview}>
               <Text style={s.previewTitle}>Preview</Text>
               <View style={s.previewCard}>
@@ -162,7 +248,7 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
                   <View style={s.previewCheckbox} />
                   <View>
                     <Text style={s.previewName}>{name.trim()}</Text>
-                    <Text style={s.previewDays}>{daysLabel}</Text>
+                    <Text style={s.previewDays}>{previewLabel}</Text>
                   </View>
                 </View>
               </View>
@@ -173,12 +259,9 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
         {/* Save Button */}
         <View style={s.footer}>
           <TouchableOpacity
-            style={[
-              s.saveButton,
-              (!name.trim() || assignedDays.length === 0) && s.saveButtonDisabled,
-            ]}
+            style={[s.saveButton, !canSave && s.saveButtonDisabled]}
             onPress={handleSave}
-            disabled={!name.trim() || assignedDays.length === 0}
+            disabled={!canSave}
             activeOpacity={0.8}
           >
             <Text style={s.saveButtonText}>
@@ -250,6 +333,81 @@ function makeStyles(colors: ThemeColors) {
       paddingVertical: spacing.md,
       fontSize: fontSize.lg,
       color: colors.text,
+    },
+    freqRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    freqOption: {
+      flex: 1,
+      borderRadius: borderRadius.md,
+      borderWidth: 2,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.sm,
+      alignItems: 'center',
+    },
+    freqOptionSelected: {
+      borderColor: '#F59E0B',
+      backgroundColor: '#FEF3C7',
+    },
+    freqOptionTitle: {
+      fontSize: fontSize.md,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    freqOptionTitleSelected: {
+      color: '#B45309',
+    },
+    freqOptionSubtitle: {
+      fontSize: fontSize.sm,
+      color: colors.textSubtle,
+      marginTop: 2,
+    },
+    goalRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    goalStep: {
+      width: 44,
+      height: 44,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    goalStepText: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: colors.primary,
+      lineHeight: 24,
+    },
+    goalInput: {
+      width: 64,
+      height: 44,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+      textAlign: 'center',
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    goalSuffix: {
+      fontSize: fontSize.md,
+      color: colors.textSubtle,
+      marginLeft: spacing.xs,
+    },
+    goalHint: {
+      fontSize: fontSize.sm,
+      color: colors.textSubtle,
+      marginTop: spacing.sm,
+      fontStyle: 'italic',
     },
     quickSelectRow: {
       flexDirection: 'row',

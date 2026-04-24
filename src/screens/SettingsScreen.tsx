@@ -14,9 +14,9 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
-import { getPregnancyWeek, getDaysUntilDue } from '../storage/storage';
+import { getPregnancyWeek, getDaysUntilDue, createReminder } from '../storage/storage';
 import { BackIcon } from '../components/Icons';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, ReminderConfig } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -175,6 +175,281 @@ function calendarPickerStyles(colors: ThemeColors) {
   });
 }
 
+function formatTime(hour: number, minute: number): string {
+  const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  const ampm = hour < 12 ? 'AM' : 'PM';
+  return `${h12}:${String(minute).padStart(2, '0')} ${ampm}`;
+}
+
+function ReminderEditor({
+  config,
+  onChange,
+  onDelete,
+  colors,
+}: {
+  config: ReminderConfig;
+  onChange: (next: ReminderConfig) => void;
+  onDelete: () => void;
+  colors: ThemeColors;
+}) {
+  const s = reminderEditorStyles(colors);
+  const [titleDraft, setTitleDraft] = useState(config.title);
+  const [bodyDraft, setBodyDraft] = useState(config.body);
+
+  // Keep local drafts in sync if config changes from outside
+  React.useEffect(() => {
+    setTitleDraft(config.title);
+  }, [config.title]);
+  React.useEffect(() => {
+    setBodyDraft(config.body);
+  }, [config.body]);
+
+  const isPM = config.hour >= 12;
+  const hour12 = ((config.hour + 11) % 12) + 1; // 1..12
+
+  // Convert a 12-hour value (1..12) + AM/PM back to 0..23
+  const to24 = (h12: number, pm: boolean): number => {
+    const base = h12 % 12; // 12 → 0, 1..11 → 1..11
+    return pm ? base + 12 : base;
+  };
+
+  const bumpHour = (delta: number) => {
+    // Cycle 1..12, preserving AM/PM
+    const nextH12 = ((hour12 - 1 + delta + 12) % 12) + 1;
+    onChange({ ...config, hour: to24(nextH12, isPM) });
+  };
+  const toggleAmPm = () => {
+    onChange({ ...config, hour: (config.hour + 12) % 24 });
+  };
+  const bumpMinute = (delta: number) => {
+    // Step by 5 minutes for ergonomics; only affects minute (don't roll into hour)
+    const next = ((config.minute + delta) % 60 + 60) % 60;
+    onChange({ ...config, minute: next });
+  };
+
+  return (
+    <View style={s.container}>
+      <View style={s.headerRow}>
+        <Text style={s.label}>{config.title || 'Reminder'}</Text>
+        <TouchableOpacity onPress={onDelete} style={s.deleteBtn} activeOpacity={0.6}>
+          <Text style={s.deleteBtnText}>×</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={s.timeRow}>
+        <View style={s.stepperGroup}>
+          <Text style={s.stepperCaption}>Hour</Text>
+          <View style={s.stepperRow}>
+            <TouchableOpacity style={s.stepBtn} onPress={() => bumpHour(-1)} activeOpacity={0.7}>
+              <Text style={s.stepBtnText}>−</Text>
+            </TouchableOpacity>
+            <Text style={s.stepValue}>{hour12}</Text>
+            <TouchableOpacity style={s.stepBtn} onPress={() => bumpHour(1)} activeOpacity={0.7}>
+              <Text style={s.stepBtnText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={s.stepperGroup}>
+          <Text style={s.stepperCaption}>Minute</Text>
+          <View style={s.stepperRow}>
+            <TouchableOpacity style={s.stepBtn} onPress={() => bumpMinute(-5)} activeOpacity={0.7}>
+              <Text style={s.stepBtnText}>−</Text>
+            </TouchableOpacity>
+            <Text style={s.stepValue}>{String(config.minute).padStart(2, '0')}</Text>
+            <TouchableOpacity style={s.stepBtn} onPress={() => bumpMinute(5)} activeOpacity={0.7}>
+              <Text style={s.stepBtnText}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={s.stepperGroup}>
+          <Text style={s.stepperCaption}>AM/PM</Text>
+          <TouchableOpacity style={s.ampmToggle} onPress={toggleAmPm} activeOpacity={0.7}>
+            <Text style={[s.ampmText, !isPM && s.ampmTextActive]}>AM</Text>
+            <Text style={s.ampmDivider}>·</Text>
+            <Text style={[s.ampmText, isPM && s.ampmTextActive]}>PM</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={s.previewBox}>
+          <Text style={s.previewTime}>{formatTime(config.hour, config.minute)}</Text>
+        </View>
+      </View>
+      <Text style={[s.stepperCaption, { marginTop: spacing.sm }]}>Title</Text>
+      <TextInput
+        style={s.titleInput}
+        value={titleDraft}
+        onChangeText={setTitleDraft}
+        onBlur={() => {
+          const trimmed = titleDraft.trim();
+          if (trimmed && trimmed !== config.title) {
+            onChange({ ...config, title: trimmed });
+          } else if (!trimmed) {
+            // Revert local draft if user cleared it — title can't be empty
+            setTitleDraft(config.title);
+          }
+        }}
+        placeholder="Notification title"
+        placeholderTextColor={colors.checkboxEmpty}
+        returnKeyType="done"
+      />
+      <Text style={[s.stepperCaption, { marginTop: spacing.sm }]}>Message</Text>
+      <TextInput
+        style={s.bodyInput}
+        value={bodyDraft}
+        onChangeText={setBodyDraft}
+        onBlur={() => {
+          if (bodyDraft.trim() !== config.body) {
+            onChange({ ...config, body: bodyDraft.trim() });
+          }
+        }}
+        multiline
+        numberOfLines={3}
+        textAlignVertical="top"
+        placeholder="Enter reminder text"
+        placeholderTextColor={colors.checkboxEmpty}
+      />
+    </View>
+  );
+}
+
+function reminderEditorStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    container: {
+      backgroundColor: colors.card,
+      borderRadius: borderRadius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: spacing.md,
+      marginTop: spacing.sm,
+    },
+    headerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.sm,
+    },
+    label: {
+      flex: 1,
+      fontSize: fontSize.md,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    deleteBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.dangerLight,
+    },
+    deleteBtnText: {
+      fontSize: 22,
+      fontWeight: '700',
+      color: colors.danger,
+      lineHeight: 24,
+      marginTop: -2,
+    },
+    timeRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: spacing.sm,
+    },
+    stepperGroup: {
+      alignItems: 'center',
+    },
+    stepperCaption: {
+      fontSize: fontSize.sm,
+      color: colors.textSubtle,
+      fontWeight: '600',
+      marginBottom: 4,
+    },
+    stepperRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    stepBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    stepBtnText: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: colors.primary,
+      lineHeight: 22,
+    },
+    stepValue: {
+      fontSize: fontSize.lg,
+      fontWeight: '700',
+      color: colors.text,
+      minWidth: 32,
+      textAlign: 'center',
+    },
+    ampmToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      height: 36,
+      paddingHorizontal: spacing.sm,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      backgroundColor: colors.background,
+    },
+    ampmText: {
+      fontSize: fontSize.md,
+      fontWeight: '600',
+      color: colors.checkboxEmpty,
+    },
+    ampmTextActive: {
+      color: colors.primary,
+      fontWeight: '800',
+    },
+    ampmDivider: {
+      color: colors.checkboxEmpty,
+      fontWeight: '700',
+    },
+    previewBox: {
+      flex: 1,
+      alignItems: 'flex-end',
+      justifyContent: 'center',
+      height: 36,
+    },
+    previewTime: {
+      fontSize: fontSize.md,
+      fontWeight: '700',
+      color: colors.primary,
+    },
+    titleInput: {
+      backgroundColor: colors.background,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+      fontSize: fontSize.md,
+      fontWeight: '600',
+      color: colors.text,
+    },
+    bodyInput: {
+      backgroundColor: colors.background,
+      borderRadius: borderRadius.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+      fontSize: fontSize.md,
+      color: colors.text,
+      minHeight: 70,
+    },
+  });
+}
+
 export default function SettingsScreen({ navigation }: Props) {
   const { colors, isDark, toggleDarkMode, settings, updateSettings } = useTheme();
   const styles = makeStyles(colors);
@@ -196,6 +471,24 @@ export default function SettingsScreen({ navigation }: Props) {
 
   const handleToggleReminders = async () => {
     await updateSettings({ remindersEnabled: !settings.remindersEnabled });
+  };
+
+  const handleUpdateReminder = async (next: ReminderConfig) => {
+    await updateSettings({
+      reminders: settings.reminders.map((r) => (r.id === next.id ? next : r)),
+    });
+  };
+
+  const handleDeleteReminder = async (id: string) => {
+    await updateSettings({
+      reminders: settings.reminders.filter((r) => r.id !== id),
+    });
+  };
+
+  const handleAddReminder = async () => {
+    await updateSettings({
+      reminders: [...settings.reminders, createReminder()],
+    });
   };
 
   const pregnancyWeek = settings.dueDate ? getPregnancyWeek(settings.dueDate) : null;
@@ -321,8 +614,7 @@ export default function SettingsScreen({ navigation }: Props) {
             <View style={styles.toggleInfo}>
               <Text style={styles.sectionTitle}>Daily Reminders</Text>
               <Text style={styles.sectionDesc}>
-                8:00 AM — Today's supplements{'\n'}
-                8:00 PM — Missed supplement check
+                Add as many or as few notifications as you want
               </Text>
             </View>
             <Switch
@@ -332,6 +624,32 @@ export default function SettingsScreen({ navigation }: Props) {
               thumbColor="#FFFFFF"
             />
           </View>
+
+          {settings.remindersEnabled && (
+            <>
+              {settings.reminders.length === 0 && (
+                <Text style={[styles.sectionDesc, { marginTop: spacing.sm, fontStyle: 'italic' }]}>
+                  No reminders yet. Tap below to add one.
+                </Text>
+              )}
+              {settings.reminders.map((reminder) => (
+                <ReminderEditor
+                  key={reminder.id}
+                  config={reminder}
+                  onChange={handleUpdateReminder}
+                  onDelete={() => handleDeleteReminder(reminder.id)}
+                  colors={colors}
+                />
+              ))}
+              <TouchableOpacity
+                style={styles.addReminderButton}
+                onPress={handleAddReminder}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.addReminderButtonText}>＋ Add reminder</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         {/* Weekly Report */}
@@ -464,6 +782,21 @@ function makeStyles(colors: ThemeColors) {
       color: colors.danger,
       fontSize: fontSize.sm,
       fontWeight: '500',
+    },
+    addReminderButton: {
+      marginTop: spacing.md,
+      paddingVertical: spacing.md,
+      borderRadius: borderRadius.md,
+      borderWidth: 2,
+      borderStyle: 'dashed',
+      borderColor: colors.primary,
+      alignItems: 'center',
+      backgroundColor: 'transparent',
+    },
+    addReminderButtonText: {
+      color: colors.primary,
+      fontSize: fontSize.md,
+      fontWeight: '700',
     },
     reportButton: {
       backgroundColor: colors.primaryDark,
