@@ -40,6 +40,7 @@ export default function WorkoutCard({
 
   const isGoal = workout.frequency === 'weekly';
   const goal = workout.weeklyGoal ?? 1;
+  const filledCount = Math.min(weekCount ?? 0, goal);
   const goalMet = isGoal && (weekCount ?? 0) >= goal;
 
   const daysLabel = isGoal
@@ -53,6 +54,17 @@ export default function WorkoutCard({
     setShowNotes(!showNotes);
   };
 
+  // For weekly-goal workouts, each checkbox represents a session this week.
+  // Tap acts on today: tapping an empty box completes today (only if today
+  // isn't already done), tapping a filled box uncompletes today (only if today
+  // *is* the one done). Other-day completions can only be edited from that day.
+  const handleGoalBoxPress = (boxIndex: number) => {
+    if (disabled) return;
+    const isFilled = boxIndex < filledCount;
+    if (isFilled && completed) onToggle();
+    else if (!isFilled && !completed) onToggle();
+  };
+
   return (
     <TouchableOpacity
       style={[s.card, (completed || goalMet) && s.cardComplete]}
@@ -61,19 +73,21 @@ export default function WorkoutCard({
       delayLongPress={500}
     >
       <View style={s.topRow}>
-        {/* Checkbox */}
-        <TouchableOpacity
-          style={[s.checkbox, completed && s.checkboxChecked]}
-          onPress={() => !disabled && onToggle()}
-          activeOpacity={0.6}
-          disabled={disabled}
-        >
-          {completed && <CheckIcon size={22} color="#FFFFFF" strokeWidth={3} />}
-        </TouchableOpacity>
+        {/* Checkbox — single big one for day-assigned workouts only */}
+        {!isGoal && (
+          <TouchableOpacity
+            style={[s.checkbox, completed && s.checkboxChecked]}
+            onPress={() => !disabled && onToggle()}
+            activeOpacity={0.6}
+            disabled={disabled}
+          >
+            {completed && <CheckIcon size={22} color="#FFFFFF" strokeWidth={3} />}
+          </TouchableOpacity>
+        )}
 
         {/* Info */}
         <View style={s.info}>
-          <Text style={[s.name, completed && s.nameComplete]}>
+          <Text style={[s.name, (completed || goalMet) && s.nameComplete]}>
             {workout.name}
           </Text>
           <Text style={s.daysText}>{daysLabel}</Text>
@@ -90,6 +104,26 @@ export default function WorkoutCard({
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Per-session checkboxes for weekly-goal workouts */}
+      {isGoal && (
+        <View style={s.goalCheckboxRow}>
+          {Array.from({ length: goal }).map((_, i) => {
+            const isFilled = i < filledCount;
+            return (
+              <TouchableOpacity
+                key={i}
+                style={[s.goalCheckbox, isFilled && s.checkboxChecked]}
+                onPress={() => handleGoalBoxPress(i)}
+                activeOpacity={0.6}
+                disabled={disabled}
+              >
+                {isFilled && <CheckIcon size={18} color="#FFFFFF" strokeWidth={3} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
 
       {/* Notes input */}
       {showNotes && !disabled && (
@@ -163,6 +197,22 @@ function makeStyles(colors: ThemeColors) {
     checkboxChecked: {
       backgroundColor: colors.success,
       borderColor: colors.success,
+    },
+    goalCheckboxRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      marginTop: spacing.sm,
+    },
+    goalCheckbox: {
+      width: 36,
+      height: 36,
+      borderRadius: borderRadius.full,
+      borderWidth: 2.5,
+      borderColor: '#F59E0B',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.background,
     },
     checkmarkIcon: {
       alignItems: 'center',
