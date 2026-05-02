@@ -5,17 +5,14 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Switch,
   StatusBar,
-  Platform,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import { getPregnancyWeek, getDaysUntilDue, createReminder } from '../storage/storage';
-import { BackIcon } from '../components/Icons';
 import { RootStackParamList, ReminderConfig } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -495,22 +492,13 @@ export default function SettingsScreen({ navigation }: Props) {
   const daysUntil = settings.dueDate ? getDaysUntilDue(settings.dueDate) : null;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
         backgroundColor={colors.background}
       />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <BackIcon size={20} color={colors.primary} strokeWidth={2.5} />
-            <Text style={styles.backText}>Back</Text>
-          </View>
-        </TouchableOpacity>
+      <View style={styles.subHeader}>
         <Text style={styles.headerTitle}>Settings</Text>
-        <View style={{ width: 60 }} />
       </View>
 
       <ScrollView
@@ -673,7 +661,7 @@ export default function SettingsScreen({ navigation }: Props) {
           <Text style={styles.footerSubtext}>Made with love for your pregnancy journey</Text>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -682,26 +670,14 @@ function makeStyles(colors: ThemeColors) {
     container: {
       flex: 1,
       backgroundColor: colors.background,
-      paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 32 : 0,
     },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+    subHeader: {
       paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.md,
-      backgroundColor: colors.card,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    backButton: {},
-    backText: {
-      fontSize: fontSize.lg,
-      color: colors.primary,
-      fontWeight: '600',
+      paddingTop: spacing.md,
+      paddingBottom: spacing.sm,
     },
     headerTitle: {
-      fontSize: fontSize.lg,
+      fontSize: fontSize.xl,
       fontWeight: '700',
       color: colors.text,
     },

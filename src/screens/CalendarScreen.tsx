@@ -4,17 +4,16 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   StatusBar,
   ScrollView,
-  Platform,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import CalendarGrid from '../components/CalendarGrid';
 import SupplementCard from '../components/SupplementCard';
 import WorkoutCard from '../components/WorkoutCard';
-import { PillIcon, DumbbellIcon, GearIcon } from '../components/Icons';
+import { PillIcon, DumbbellIcon } from '../components/Icons';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import {
@@ -30,7 +29,12 @@ import {
   getDayRecord,
   toggleDose,
   toggleWorkout,
+  incrementWorkoutSessions,
+  decrementWorkoutSessions,
   saveWorkoutNotes,
+  deleteSupplement,
+  deleteWorkout,
+  getWeeklyWorkoutCount,
   formatDate,
   getWeeklySupplementDoses,
   getWorkoutProgress,
@@ -62,6 +66,7 @@ export default function CalendarScreen({ navigation }: Props) {
   const [doseSourceRecord, setDoseSourceRecord] = useState<DoseSourceRecord>({});
   const [todayWorkouts, setTodayWorkouts] = useState<Workout[]>([]);
   const [workoutRecord, setWorkoutRecord] = useState<WorkoutDayRecord>({});
+  const [weeklyWorkoutCounts, setWeeklyWorkoutCounts] = useState<Record<string, number>>({});
   const [showToday, setShowToday] = useState(false);
 
   useFocusEffect(
@@ -98,6 +103,15 @@ export default function CalendarScreen({ navigation }: Props) {
     const tw = getWorkoutsForDate(wks, todayStr);
     setTodayWorkouts(tw);
     setWorkoutRecord(await getWorkoutDayRecord(todayStr));
+
+    // Weekly session counts for goal-frequency workouts shown today.
+    const counts: Record<string, number> = {};
+    for (const w of tw) {
+      if (w.frequency === 'weekly') {
+        counts[w.id] = await getWeeklyWorkoutCount(w.id, todayStr);
+      }
+    }
+    setWeeklyWorkoutCounts(counts);
   };
 
   const handlePrevMonth = () => {
@@ -131,6 +145,54 @@ export default function CalendarScreen({ navigation }: Props) {
     setWorkoutRecord(updated);
   };
 
+  const handleIncrementSession = async (workoutId: string) => {
+    const updated = await incrementWorkoutSessions(todayStr, workoutId);
+    setWorkoutRecord(updated);
+    loadData();
+  };
+
+  const handleDecrementSession = async (workoutId: string) => {
+    const updated = await decrementWorkoutSessions(todayStr, workoutId);
+    setWorkoutRecord(updated);
+    loadData();
+  };
+
+  const confirmDeleteSupplement = (sup: Supplement) => {
+    Alert.alert(
+      'Delete Supplement',
+      `Remove "${sup.name}" from tracking?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteSupplement(sup.id);
+            loadData();
+          },
+        },
+      ],
+    );
+  };
+
+  const confirmDeleteWorkout = (w: Workout) => {
+    Alert.alert(
+      'Delete Workout',
+      `Remove "${w.name}" from tracking?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteWorkout(w.id);
+            loadData();
+          },
+        },
+      ],
+    );
+  };
+
   // Pregnancy info
   const pregnancyWeek = settings.dueDate ? getPregnancyWeek(settings.dueDate) : null;
   const daysUntil = settings.dueDate ? getDaysUntilDue(settings.dueDate) : null;
@@ -159,30 +221,13 @@ export default function CalendarScreen({ navigation }: Props) {
   const hasAnything = supplements.length > 0 || todayWorkouts.length > 0;
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={s.container}>
       <StatusBar
         barStyle={isDark ? 'light-content' : 'dark-content'}
         backgroundColor={colors.background}
       />
 
       <ScrollView contentContainerStyle={s.scrollContent}>
-        {/* App Title + Settings */}
-        <View style={s.titleBar}>
-          <View style={s.titleLeft}>
-            <PillIcon size={28} color={colors.primary} />
-            <View>
-              <Text style={s.title}>Pregnancy Wellness</Text>
-              <Text style={s.subtitle}>Supplement + Workout Tracker</Text>
-            </View>
-          </View>
-          <TouchableOpacity
-            style={s.settingsButton}
-            onPress={() => navigation.navigate('Settings')}
-          >
-            <GearIcon size={22} color={colors.textSubtle} strokeWidth={1.8} />
-          </TouchableOpacity>
-        </View>
-
         {/* Pregnancy Week Banner */}
         {pregnancyWeek && (
           <View style={s.pregnancyBanner}>
@@ -323,9 +368,10 @@ export default function CalendarScreen({ navigation }: Props) {
                         onToggleDose={(doseIndex) =>
                           handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
                         }
-                        onLongPress={() =>
+                        onEdit={() =>
                           navigation.navigate('AddEditSupplement', { supplement: sup })
                         }
+                        onDelete={() => confirmDeleteSupplement(sup)}
                         colors={colors}
                         linkedNames={getLinkedNames(sup)}
                         doseSources={doseSourceRecord[sup.id]}
@@ -350,9 +396,10 @@ export default function CalendarScreen({ navigation }: Props) {
                         onToggleDose={(doseIndex) =>
                           handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
                         }
-                        onLongPress={() =>
+                        onEdit={() =>
                           navigation.navigate('AddEditSupplement', { supplement: sup })
                         }
+                        onDelete={() => confirmDeleteSupplement(sup)}
                         colors={colors}
                         linkedNames={getLinkedNames(sup)}
                         doseSources={doseSourceRecord[sup.id]}
@@ -376,10 +423,18 @@ export default function CalendarScreen({ navigation }: Props) {
                         record={workoutRecord[workout.id]}
                         onToggle={() => handleToggleWorkout(workout.id)}
                         onSaveNotes={(notes) => handleSaveWorkoutNotes(workout.id, notes)}
-                        onLongPress={() =>
+                        onEdit={() =>
                           navigation.navigate('AddEditWorkout', { workout })
                         }
+                        onDelete={() => confirmDeleteWorkout(workout)}
                         colors={colors}
+                        weekCount={
+                          workout.frequency === 'weekly'
+                            ? weeklyWorkoutCounts[workout.id] ?? 0
+                            : undefined
+                        }
+                        onIncrementSession={() => handleIncrementSession(workout.id)}
+                        onDecrementSession={() => handleDecrementSession(workout.id)}
                       />
                     ))}
                   </>
@@ -389,7 +444,7 @@ export default function CalendarScreen({ navigation }: Props) {
           </>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -398,46 +453,9 @@ function makeStyles(colors: ThemeColors) {
     container: {
       flex: 1,
       backgroundColor: colors.background,
-      paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight || 32 : 0,
     },
     scrollContent: {
       paddingBottom: 60,
-    },
-    titleBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: spacing.lg,
-      paddingTop: spacing.lg,
-      paddingBottom: spacing.sm,
-    },
-    titleLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-    },
-    title: {
-      fontSize: fontSize.xl,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    subtitle: {
-      fontSize: fontSize.sm,
-      color: colors.textSubtle,
-      marginTop: 2,
-    },
-    settingsButton: {
-      width: 44,
-      height: 44,
-      borderRadius: borderRadius.full,
-      backgroundColor: colors.card,
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 4,
-      elevation: 2,
     },
     pregnancyBanner: {
       flexDirection: 'row',

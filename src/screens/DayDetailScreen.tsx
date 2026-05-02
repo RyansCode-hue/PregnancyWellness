@@ -27,6 +27,8 @@ import {
   getWorkoutsForDate,
   getWorkoutDayRecord,
   toggleWorkout,
+  incrementWorkoutSessions,
+  decrementWorkoutSessions,
   saveWorkoutNotes,
   deleteWorkout,
   formatDate,
@@ -224,14 +226,6 @@ export default function DayDetailScreen({ route, navigation }: Props) {
     });
   };
 
-  const handleSupplementLongPress = (supplement: Supplement) => {
-    Alert.alert(supplement.name, 'What would you like to do?', [
-      { text: 'Edit', onPress: () => navigation.navigate('AddEditSupplement', { supplement }) },
-      { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteSupplement(supplement) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
-
   const confirmDeleteSupplement = (supplement: Supplement) => {
     Alert.alert(
       'Delete Supplement',
@@ -284,12 +278,22 @@ export default function DayDetailScreen({ route, navigation }: Props) {
     setWorkoutRecord(updated);
   };
 
-  const handleWorkoutLongPress = (workout: Workout) => {
-    Alert.alert(workout.name, 'What would you like to do?', [
-      { text: 'Edit', onPress: () => navigation.navigate('AddEditWorkout', { workout }) },
-      { text: 'Delete', style: 'destructive', onPress: () => confirmDeleteWorkout(workout) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  const handleIncrementSession = async (workoutId: string) => {
+    const updated = await incrementWorkoutSessions(date, workoutId);
+    setWorkoutRecord(updated);
+    setWeeklyWorkoutCounts((prev) => ({
+      ...prev,
+      [workoutId]: (prev[workoutId] ?? 0) + 1,
+    }));
+  };
+
+  const handleDecrementSession = async (workoutId: string) => {
+    const updated = await decrementWorkoutSessions(date, workoutId);
+    setWorkoutRecord(updated);
+    setWeeklyWorkoutCounts((prev) => ({
+      ...prev,
+      [workoutId]: Math.max(0, (prev[workoutId] ?? 0) - 1),
+    }));
   };
 
   const confirmDeleteWorkout = (workout: Workout) => {
@@ -420,7 +424,8 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     onToggleDose={(doseIndex) =>
                       handleToggleDose(sup.id, doseIndex, sup.dosesPerDay, sup.name)
                     }
-                    onLongPress={() => handleSupplementLongPress(sup)}
+                    onEdit={() => navigation.navigate('AddEditSupplement', { supplement: sup })}
+                    onDelete={() => confirmDeleteSupplement(sup)}
                     disabled={isFuture}
                     colors={colors}
                     linkedNames={getLinkedNames(sup)}
@@ -446,7 +451,8 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     onToggleDose={(doseIndex) =>
                       handleToggleDose(sup.id, doseIndex, sup.dosesPerDay, sup.name)
                     }
-                    onLongPress={() => handleSupplementLongPress(sup)}
+                    onEdit={() => navigation.navigate('AddEditSupplement', { supplement: sup })}
+                    onDelete={() => confirmDeleteSupplement(sup)}
                     disabled={isFuture}
                     colors={colors}
                     linkedNames={getLinkedNames(sup)}
@@ -471,7 +477,8 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     record={workoutRecord[workout.id]}
                     onToggle={() => handleToggleWorkout(workout.id, workout.name)}
                     onSaveNotes={(notes) => handleSaveWorkoutNotes(workout.id, notes)}
-                    onLongPress={() => handleWorkoutLongPress(workout)}
+                    onEdit={() => navigation.navigate('AddEditWorkout', { workout })}
+                    onDelete={() => confirmDeleteWorkout(workout)}
                     disabled={isFuture}
                     colors={colors}
                     weekCount={
@@ -479,12 +486,14 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                         ? weeklyWorkoutCounts[workout.id] ?? 0
                         : undefined
                     }
+                    onIncrementSession={() => handleIncrementSession(workout.id)}
+                    onDecrementSession={() => handleDecrementSession(workout.id)}
                   />
                 ))}
               </>
             )}
 
-            <Text style={s.hint}>Long-press any item to edit or delete</Text>
+            <Text style={s.hint}>Swipe any item left to edit or delete</Text>
           </>
         )}
       </ScrollView>

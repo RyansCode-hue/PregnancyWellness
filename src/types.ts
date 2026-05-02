@@ -37,7 +37,11 @@ export interface DoseSourceRecord {
 
 export interface WorkoutDayRecord {
   [workoutId: string]: {
+    // 'days' frequency uses this boolean (one per assigned day).
     completed: boolean;
+    // 'weekly' frequency uses this counter (sessions logged on this day).
+    // Lets you tap multiple times on the same day to log multiple sessions.
+    sessions?: number;
     notes?: string;
   };
 }
@@ -80,6 +84,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ],
 };
 
+export type LaborCategory = 'position' | 'comfort';
+export type LaborStage = 'early' | 'active' | 'transition' | 'pushing';
+
+export interface LaborItem {
+  id: string;
+  category: LaborCategory;
+  name: string;
+  caption: string;
+  imageUri?: string;
+  videoUrl?: string;
+  externalUrl?: string;
+  // Which stages of labor this item applies to. Undefined or empty = all stages.
+  stages?: LaborStage[];
+  createdAt: string;
+}
+
+export interface Contraction {
+  id: string;
+  start: string; // ISO timestamp
+  end?: string;  // ISO timestamp; undefined while still in progress
+}
+
 export type RootStackParamList = {
   Calendar: undefined;
   DayDetail: { date: string };
@@ -87,4 +113,7 @@ export type RootStackParamList = {
   AddEditWorkout: { workout?: Workout };
   Settings: undefined;
   WeeklyReport: undefined;
+  Labor: undefined;
+  AddEditLabor: { item?: LaborItem } | undefined;
+  Contractions: undefined;
 };

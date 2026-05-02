@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TextInput,
   StyleSheet,
 } from 'react-native';
+import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Workout, WorkoutDayRecord } from '../types';
 import { DAY_NAMES_SHORT } from '../storage/storage';
@@ -16,11 +17,16 @@ interface WorkoutCardProps {
   record: WorkoutDayRecord[string] | undefined;
   onToggle: () => void;
   onSaveNotes: (notes: string) => void;
-  onLongPress: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
   disabled?: boolean;
   colors: ThemeColors;
-  /** For 'weekly' frequency: completed count this week (Mon-Sun). */
+  /** For 'weekly' frequency: total sessions logged this week (Mon-Sun). */
   weekCount?: number;
+  /** For 'weekly' frequency: tapping an empty circle bumps today's count. */
+  onIncrementSession?: () => void;
+  /** For 'weekly' frequency: tapping a filled circle removes one from today. */
+  onDecrementSession?: () => void;
 }
 
 export default function WorkoutCard({
@@ -28,20 +34,27 @@ export default function WorkoutCard({
   record,
   onToggle,
   onSaveNotes,
-  onLongPress,
+  onEdit,
+  onDelete,
   disabled = false,
   colors,
   weekCount,
+  onIncrementSession,
+  onDecrementSession,
 }: WorkoutCardProps) {
   const s = makeStyles(colors);
   const completed = record?.completed || false;
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState(record?.notes || '');
+  const swipeableRef = useRef<Swipeable>(null);
 
   const isGoal = workout.frequency === 'weekly';
   const goal = workout.weeklyGoal ?? 1;
   const filledCount = Math.min(weekCount ?? 0, goal);
   const goalMet = isGoal && (weekCount ?? 0) >= goal;
+  // For goal workouts, the card is "complete" only when the whole weekly goal is met,
+  // not when a single day has been logged. For day workouts, today's completion is enough.
+  const isCardComplete = isGoal ? goalMet : completed;
 
   const daysLabel = isGoal
     ? `${weekCount ?? 0} of ${goal} this week`
@@ -54,24 +67,51 @@ export default function WorkoutCard({
     setShowNotes(!showNotes);
   };
 
-  // For weekly-goal workouts, each checkbox represents a session this week.
-  // Tap acts on today: tapping an empty box completes today (only if today
-  // isn't already done), tapping a filled box uncompletes today (only if today
-  // *is* the one done). Other-day completions can only be edited from that day.
+  // Tap an empty circle to log a new session today. Tap a filled circle to
+  // remove one session from today (floor at 0). Lets you stack multiple
+  // sessions on the same day or spread them across the week.
   const handleGoalBoxPress = (boxIndex: number) => {
     if (disabled) return;
-    const isFilled = boxIndex < filledCount;
-    if (isFilled && completed) onToggle();
-    else if (!isFilled && !completed) onToggle();
+    if (boxIndex < filledCount) {
+      onDecrementSession?.();
+    } else {
+      onIncrementSession?.();
+    }
   };
 
+  const closeSwipeable = () => swipeableRef.current?.close();
+
+  const renderRightActions = () => (
+    <View style={s.swipeActions}>
+      <RectButton
+        style={[s.swipeAction, s.swipeEdit]}
+        onPress={() => {
+          closeSwipeable();
+          onEdit();
+        }}
+      >
+        <Text style={s.swipeActionText}>Edit</Text>
+      </RectButton>
+      <RectButton
+        style={[s.swipeAction, s.swipeDelete]}
+        onPress={() => {
+          closeSwipeable();
+          onDelete();
+        }}
+      >
+        <Text style={s.swipeActionText}>Delete</Text>
+      </RectButton>
+    </View>
+  );
+
   return (
-    <TouchableOpacity
-      style={[s.card, (completed || goalMet) && s.cardComplete]}
-      onLongPress={onLongPress}
-      activeOpacity={0.9}
-      delayLongPress={500}
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      overshootRight={false}
+      friction={2}
     >
+      <View style={[s.card, isCardComplete && s.cardComplete]}>
       <View style={s.topRow}>
         {/* Checkbox — single big one for day-assigned workouts only */}
         {!isGoal && (
@@ -87,7 +127,7 @@ export default function WorkoutCard({
 
         {/* Info */}
         <View style={s.info}>
-          <Text style={[s.name, (completed || goalMet) && s.nameComplete]}>
+          <Text style={[s.name, isCardComplete && s.nameComplete]}>
             {workout.name}
           </Text>
           <Text style={s.daysText}>{daysLabel}</Text>
@@ -149,14 +189,15 @@ export default function WorkoutCard({
         </Text>
       ) : null}
 
-      {(completed || goalMet) && (
+      {isCardComplete && (
         <View style={s.completeBadge}>
           <Text style={s.completeBadgeText}>
-            {goalMet && !completed ? 'Goal reached!' : 'Done!'}
+            {goalMet ? 'Goal reached!' : 'Done!'}
           </Text>
         </View>
       )}
-    </TouchableOpacity>
+      </View>
+    </Swipeable>
   );
 }
 
@@ -213,6 +254,32 @@ function makeStyles(colors: ThemeColors) {
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.background,
+    },
+    goalCheckboxToday: {
+      borderColor: colors.success,
+      borderWidth: 3,
+    },
+    swipeActions: {
+      flexDirection: 'row',
+      marginBottom: spacing.sm,
+    },
+    swipeAction: {
+      width: 72,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    swipeEdit: {
+      backgroundColor: colors.primary,
+    },
+    swipeDelete: {
+      backgroundColor: colors.danger,
+      borderTopRightRadius: borderRadius.md,
+      borderBottomRightRadius: borderRadius.md,
+    },
+    swipeActionText: {
+      color: '#FFFFFF',
+      fontSize: fontSize.md,
+      fontWeight: '700',
     },
     checkmarkIcon: {
       alignItems: 'center',

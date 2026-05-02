@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Supplement } from '../types';
 import { DAY_NAMES_SHORT } from '../storage/storage';
@@ -14,7 +15,8 @@ interface SupplementCardProps {
   supplement: Supplement;
   doses: boolean[];
   onToggleDose: (doseIndex: number) => void;
-  onLongPress: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
   disabled?: boolean;
   colors: ThemeColors;
   // Linked supplements info
@@ -27,7 +29,8 @@ export default function SupplementCard({
   supplement,
   doses,
   onToggleDose,
-  onLongPress,
+  onEdit,
+  onDelete,
   disabled = false,
   colors,
   linkedNames,
@@ -37,6 +40,7 @@ export default function SupplementCard({
   const s = makeStyles(colors);
   const completedCount = doses.filter(Boolean).length;
   const allDone = completedCount === supplement.dosesPerDay;
+  const swipeableRef = useRef<Swipeable>(null);
 
   const frequencyLabel =
     supplement.frequency === 'weekly' && supplement.dayOfWeek !== undefined
@@ -55,13 +59,39 @@ export default function SupplementCard({
     return name || null;
   };
 
+  const closeSwipeable = () => swipeableRef.current?.close();
+
+  const renderRightActions = () => (
+    <View style={s.swipeActions}>
+      <RectButton
+        style={[s.swipeAction, s.swipeEdit]}
+        onPress={() => {
+          closeSwipeable();
+          onEdit();
+        }}
+      >
+        <Text style={s.swipeActionText}>Edit</Text>
+      </RectButton>
+      <RectButton
+        style={[s.swipeAction, s.swipeDelete]}
+        onPress={() => {
+          closeSwipeable();
+          onDelete();
+        }}
+      >
+        <Text style={s.swipeActionText}>Delete</Text>
+      </RectButton>
+    </View>
+  );
+
   return (
-    <TouchableOpacity
-      style={[s.card, allDone && s.cardComplete]}
-      onLongPress={onLongPress}
-      activeOpacity={0.9}
-      delayLongPress={500}
+    <Swipeable
+      ref={swipeableRef}
+      renderRightActions={renderRightActions}
+      overshootRight={false}
+      friction={2}
     >
+    <View style={[s.card, allDone && s.cardComplete]}>
       {/* Header row */}
       <View style={s.headerRow}>
         <View style={s.nameContainer}>
@@ -117,7 +147,8 @@ export default function SupplementCard({
           <Text style={s.completeBadgeText}>All taken!</Text>
         </View>
       )}
-    </TouchableOpacity>
+    </View>
+    </Swipeable>
   );
 }
 
@@ -224,6 +255,28 @@ function makeStyles(colors: ThemeColors) {
       color: colors.success,
       fontSize: fontSize.sm,
       fontWeight: '600',
+    },
+    swipeActions: {
+      flexDirection: 'row',
+      marginBottom: spacing.sm,
+    },
+    swipeAction: {
+      width: 72,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    swipeEdit: {
+      backgroundColor: colors.primary,
+    },
+    swipeDelete: {
+      backgroundColor: colors.danger,
+      borderTopRightRadius: borderRadius.md,
+      borderBottomRightRadius: borderRadius.md,
+    },
+    swipeActionText: {
+      color: '#FFFFFF',
+      fontSize: fontSize.md,
+      fontWeight: '700',
     },
   });
 }

@@ -4,14 +4,12 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Dimensions,
 } from 'react-native';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { formatDate, DayCombinedStatus } from '../storage/storage';
 import { PillIcon, DumbbellIcon, CheckIcon, XIcon } from './Icons';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-const CELL_SIZE = Math.floor((SCREEN_WIDTH - spacing.md * 2) / 7);
+const CELL_HEIGHT = 59;
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
@@ -234,7 +232,7 @@ function makeStyles(colors: ThemeColors) {
     },
     weekRow: {
       flexDirection: 'row',
-      justifyContent: 'space-around',
+      overflow: 'hidden',
     },
     dayOfWeekText: {
       fontSize: fontSize.sm,
@@ -243,8 +241,8 @@ function makeStyles(colors: ThemeColors) {
       textAlign: 'center',
     },
     cell: {
-      width: CELL_SIZE,
-      height: CELL_SIZE + 8,
+      flex: 1,
+      height: CELL_HEIGHT,
       alignItems: 'center',
       justifyContent: 'center',
       paddingTop: 1,

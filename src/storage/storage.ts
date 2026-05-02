@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, WorkoutFrequency, AppSettings, ReminderConfig, DEFAULT_SETTINGS } from '../types';
+import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, WorkoutFrequency, AppSettings, ReminderConfig, DEFAULT_SETTINGS, LaborItem, LaborStage, Contraction } from '../types';
+import { LABOR_SEED } from '../data/laborSeed';
 
 const SUPPLEMENTS_KEY = 'supplements';
 const WORKOUTS_KEY = 'workouts';
@@ -8,6 +9,11 @@ const DAY_PREFIX = 'day:';
 const WORKOUT_DAY_PREFIX = 'workout_day:';
 const DOSE_SOURCE_PREFIX = 'dose_source:';
 const INSTALL_DATE_KEY = 'app_install_date';
+const LABOR_KEY = 'labor_items';
+// Bump this when LABOR_SEED changes so existing installs pick up new images / entries.
+// User-added items (IDs without the 'seed-' prefix) are preserved across re-seeds.
+const LABOR_SEEDED_KEY = 'labor_seeded_v5';
+const CONTRACTIONS_KEY = 'contractions';
 
 // ─── Settings ───
 
@@ -295,8 +301,9 @@ export function getWorkoutsForDate(
   });
 }
 
-// Count how many days this week (Mon-Sun containing dateStr) the user
-// completed the given weekly-goal workout.
+// Sum sessions across the week (Mon-Sun containing dateStr) for a weekly-goal
+// workout. Sessions can stack on the same day. Legacy records that only have
+// `completed: true` (from before the counter model) count as 1 session.
 export async function getWeeklyWorkoutCount(
   workoutId: string,
   dateStr: string,
@@ -309,7 +316,10 @@ export async function getWeeklyWorkoutCount(
     d.setDate(startDate.getDate() + i);
     const ds = formatDate(d);
     const record = await getWorkoutDayRecord(ds);
-    if (record[workoutId]?.completed) count++;
+    const item = record[workoutId];
+    if (item) {
+      count += item.sessions ?? (item.completed ? 1 : 0);
+    }
   }
   return count;
 }
@@ -345,6 +355,40 @@ export async function toggleWorkout(
       completed: !record[workoutId].completed,
     };
   }
+  await saveWorkoutDayRecord(date, record);
+  return record;
+}
+
+// Add one session to today's count for a weekly-goal workout.
+export async function incrementWorkoutSessions(
+  date: string,
+  workoutId: string,
+): Promise<WorkoutDayRecord> {
+  const record = await getWorkoutDayRecord(date);
+  const current = record[workoutId] ?? { completed: false };
+  const baseSessions = current.sessions ?? (current.completed ? 1 : 0);
+  record[workoutId] = {
+    ...current,
+    completed: current.completed,
+    sessions: baseSessions + 1,
+  };
+  await saveWorkoutDayRecord(date, record);
+  return record;
+}
+
+// Remove one session from today's count for a weekly-goal workout (floor at 0).
+export async function decrementWorkoutSessions(
+  date: string,
+  workoutId: string,
+): Promise<WorkoutDayRecord> {
+  const record = await getWorkoutDayRecord(date);
+  const current = record[workoutId] ?? { completed: false };
+  const baseSessions = current.sessions ?? (current.completed ? 1 : 0);
+  record[workoutId] = {
+    ...current,
+    completed: current.completed,
+    sessions: Math.max(0, baseSessions - 1),
+  };
   await saveWorkoutDayRecord(date, record);
   return record;
 }
@@ -938,4 +982,125 @@ export function groupLinkedSupplements(supplements: Supplement[]): Supplement[] 
   }
 
   return result;
+}
+
+// ─── Labor items ───
+
+export async function getLaborItems(): Promise<LaborItem[]> {
+  const seeded = await AsyncStorage.getItem(LABOR_SEEDED_KEY);
+  if (!seeded) {
+    // First run (or seed bump): refresh seed-prefixed entries from LABOR_SEED,
+    // preserving any items the user added themselves.
+    const existingJson = await AsyncStorage.getItem(LABOR_KEY);
+    const existing: LaborItem[] = existingJson ? JSON.parse(existingJson) : [];
+    const userAdded = existing.filter((i) => !i.id.startsWith('seed-'));
+    const merged = [...LABOR_SEED, ...userAdded];
+    await AsyncStorage.setItem(LABOR_KEY, JSON.stringify(merged));
+    await AsyncStorage.setItem(LABOR_SEEDED_KEY, '1');
+    return merged;
+  }
+  const json = await AsyncStorage.getItem(LABOR_KEY);
+  if (!json) return [];
+  return JSON.parse(json) as LaborItem[];
+}
+
+export async function saveLaborItem(item: LaborItem): Promise<void> {
+  const items = await getLaborItems();
+  const index = items.findIndex((i) => i.id === item.id);
+  if (index >= 0) items[index] = item;
+  else items.push(item);
+  await AsyncStorage.setItem(LABOR_KEY, JSON.stringify(items));
+}
+
+export async function deleteLaborItem(id: string): Promise<void> {
+  const items = await getLaborItems();
+  const filtered = items.filter((i) => i.id !== id);
+  await AsyncStorage.setItem(LABOR_KEY, JSON.stringify(filtered));
+}
+
+// ─── Contractions ───
+
+export async function getContractions(): Promise<Contraction[]> {
+  const json = await AsyncStorage.getItem(CONTRACTIONS_KEY);
+  return json ? JSON.parse(json) : [];
+}
+
+export async function saveContractions(list: Contraction[]): Promise<void> {
+  await AsyncStorage.setItem(CONTRACTIONS_KEY, JSON.stringify(list));
+}
+
+export async function addContraction(start: string): Promise<Contraction> {
+  const list = await getContractions();
+  const item: Contraction = {
+    id: `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    start,
+  };
+  list.push(item);
+  await saveContractions(list);
+  return item;
+}
+
+export async function endContraction(id: string, end: string): Promise<void> {
+  const list = await getContractions();
+  const idx = list.findIndex((c) => c.id === id);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], end };
+    await saveContractions(list);
+  }
+}
+
+export async function deleteContraction(id: string): Promise<void> {
+  const list = await getContractions();
+  await saveContractions(list.filter((c) => c.id !== id));
+}
+
+export async function clearContractions(): Promise<void> {
+  await AsyncStorage.removeItem(CONTRACTIONS_KEY);
+}
+
+// Estimate which labor stage you're in based on the last 5 completed
+// contractions. Classification is by inter-start interval (minutes):
+//   < 3 min  → transition
+//   3–5 min  → active
+//   ≥ 5 min  → early
+// (Pushing isn't a timer stage — by then you've stopped tracking.)
+// Returns null when there isn't enough data (need ≥ 2 completed contractions).
+export interface StageEstimate {
+  stage: LaborStage | null;
+  avgDurationSec: number;
+  avgIntervalMin: number;
+  sampleSize: number;
+}
+
+export function estimateLaborStage(contractions: Contraction[]): StageEstimate {
+  const completed = contractions.filter((c) => c.end);
+  const recent = completed.slice(-4);
+  if (recent.length < 4) {
+    return {
+      stage: null,
+      avgDurationSec: 0,
+      avgIntervalMin: 0,
+      sampleSize: recent.length,
+    };
+  }
+
+  const intervals: number[] = [];
+  for (let i = 1; i < recent.length; i++) {
+    const ms =
+      new Date(recent[i].start).getTime() - new Date(recent[i - 1].start).getTime();
+    intervals.push(ms / 60000);
+  }
+  const avgIntervalMin = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+
+  const durations = recent.map(
+    (c) => (new Date(c.end!).getTime() - new Date(c.start).getTime()) / 1000,
+  );
+  const avgDurationSec = durations.reduce((a, b) => a + b, 0) / durations.length;
+
+  let stage: LaborStage;
+  if (avgIntervalMin < 3) stage = 'transition';
+  else if (avgIntervalMin < 5) stage = 'active';
+  else stage = 'early';
+
+  return { stage, avgDurationSec, avgIntervalMin, sampleSize: recent.length };
 }
