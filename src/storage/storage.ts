@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, WorkoutFrequency, AppSettings, ReminderConfig, DEFAULT_SETTINGS, LaborItem, LaborStage, Contraction } from '../types';
+import { Supplement, DayRecord, DoseSourceRecord, Workout, WorkoutDayRecord, WorkoutFrequency, AppSettings, ReminderConfig, DEFAULT_SETTINGS, LaborItem, LaborStage, Contraction, FeedingSession, SleepSession, DiaperEvent, FeedSide, FeedHold, DiaperKind, AmountUnit } from '../types';
 import { LABOR_SEED } from '../data/laborSeed';
 
 const SUPPLEMENTS_KEY = 'supplements';
@@ -14,6 +14,9 @@ const LABOR_KEY = 'labor_items';
 // User-added items (IDs without the 'seed-' prefix) are preserved across re-seeds.
 const LABOR_SEEDED_KEY = 'labor_seeded_v5';
 const CONTRACTIONS_KEY = 'contractions';
+const FEEDINGS_KEY = 'baby_feedings';
+const SLEEPS_KEY = 'baby_sleeps';
+const DIAPERS_KEY = 'baby_diapers';
 
 // ─── Settings ───
 
@@ -66,6 +69,12 @@ export async function getSettings(): Promise<AppSettings> {
     ...DEFAULT_SETTINGS,
     ...rest,
     reminders,
+    // Per-key merge so legacy installs (and future tabs added to ToggleableTab) always have
+    // every key present. A stored object missing one key would otherwise break tab visibility.
+    enabledTabs: {
+      ...DEFAULT_SETTINGS.enabledTabs,
+      ...(rest.enabledTabs ?? {}),
+    },
   };
 }
 
@@ -90,11 +99,15 @@ export async function getSupplements(): Promise<Supplement[]> {
   const json = await AsyncStorage.getItem(SUPPLEMENTS_KEY);
   if (!json) return [];
   const supplements: Supplement[] = JSON.parse(json);
-  return supplements.map((s) => ({
-    ...s,
-    frequency: s.frequency || 'daily',
-    linkedSupplementIds: s.linkedSupplementIds || [],
-  }));
+  // Backfill sortOrder from stored array index for legacy installs.
+  return supplements
+    .map((s, i) => ({
+      ...s,
+      frequency: s.frequency || 'daily',
+      linkedSupplementIds: s.linkedSupplementIds || [],
+      sortOrder: typeof s.sortOrder === 'number' ? s.sortOrder : i,
+    }))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
 export async function saveSupplement(supplement: Supplement): Promise<void> {
@@ -104,8 +117,21 @@ export async function saveSupplement(supplement: Supplement): Promise<void> {
   const newLinked = supplement.linkedSupplementIds || [];
 
   if (index >= 0) {
-    supplements[index] = supplement;
+    // Preserve existing sortOrder on update unless caller explicitly set one
+    const next = { ...supplement };
+    if (typeof next.sortOrder !== 'number') {
+      next.sortOrder = supplements[index].sortOrder;
+    }
+    supplements[index] = next;
   } else {
+    // Append new items at the end
+    if (typeof supplement.sortOrder !== 'number') {
+      const maxOrder = supplements.reduce(
+        (m, s) => Math.max(m, s.sortOrder ?? 0),
+        -1,
+      );
+      supplement = { ...supplement, sortOrder: maxOrder + 1 };
+    }
     supplements.push(supplement);
   }
 
@@ -133,6 +159,23 @@ export async function saveSupplement(supplement: Supplement): Promise<void> {
   }
 
   await AsyncStorage.setItem(SUPPLEMENTS_KEY, JSON.stringify(supplements));
+}
+
+// Persist a new ordering for supplements. Pass IDs in the desired display order;
+// each supplement's sortOrder is reassigned to its index. IDs not in the list
+// keep their previous sortOrder (placed after the explicitly-ordered ones).
+export async function saveSupplementOrder(orderedIds: string[]): Promise<void> {
+  const supplements = await getSupplements();
+  const indexById = new Map<string, number>();
+  orderedIds.forEach((id, i) => indexById.set(id, i));
+  const tail = orderedIds.length;
+  let tailCursor = 0;
+  const next = supplements.map((s) => {
+    const idx = indexById.get(s.id);
+    if (typeof idx === 'number') return { ...s, sortOrder: idx };
+    return { ...s, sortOrder: tail + tailCursor++ };
+  });
+  await AsyncStorage.setItem(SUPPLEMENTS_KEY, JSON.stringify(next));
 }
 
 export async function deleteSupplement(id: string): Promise<void> {
@@ -231,23 +274,52 @@ export async function getWorkouts(): Promise<Workout[]> {
   const json = await AsyncStorage.getItem(WORKOUTS_KEY);
   if (!json) return [];
   const workouts: Workout[] = JSON.parse(json);
-  // Backfill: workouts saved before frequency existed default to 'days'
-  return workouts.map((w) => ({
-    ...w,
-    frequency: w.frequency || 'days',
-    assignedDays: w.assignedDays || [],
-  }));
+  // Backfill: workouts saved before frequency existed default to 'days'.
+  // Backfill sortOrder from stored array index for legacy installs.
+  return workouts
+    .map((w, i) => ({
+      ...w,
+      frequency: w.frequency || 'days',
+      assignedDays: w.assignedDays || [],
+      sortOrder: typeof w.sortOrder === 'number' ? w.sortOrder : i,
+    }))
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 }
 
 export async function saveWorkout(workout: Workout): Promise<void> {
   const workouts = await getWorkouts();
   const index = workouts.findIndex((w) => w.id === workout.id);
   if (index >= 0) {
-    workouts[index] = workout;
+    const next = { ...workout };
+    if (typeof next.sortOrder !== 'number') {
+      next.sortOrder = workouts[index].sortOrder;
+    }
+    workouts[index] = next;
   } else {
+    if (typeof workout.sortOrder !== 'number') {
+      const maxOrder = workouts.reduce(
+        (m, w) => Math.max(m, w.sortOrder ?? 0),
+        -1,
+      );
+      workout = { ...workout, sortOrder: maxOrder + 1 };
+    }
     workouts.push(workout);
   }
   await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(workouts));
+}
+
+export async function saveWorkoutOrder(orderedIds: string[]): Promise<void> {
+  const workouts = await getWorkouts();
+  const indexById = new Map<string, number>();
+  orderedIds.forEach((id, i) => indexById.set(id, i));
+  const tail = orderedIds.length;
+  let tailCursor = 0;
+  const next = workouts.map((w) => {
+    const idx = indexById.get(w.id);
+    if (typeof idx === 'number') return { ...w, sortOrder: idx };
+    return { ...w, sortOrder: tail + tailCursor++ };
+  });
+  await AsyncStorage.setItem(WORKOUTS_KEY, JSON.stringify(next));
 }
 
 export async function deleteWorkout(id: string): Promise<void> {
@@ -299,6 +371,40 @@ export function getWorkoutsForDate(
     if (w.frequency === 'weekly') return true;
     return w.assignedDays.includes(dayOfWeek as any);
   });
+}
+
+// For each given workout ID, find the most recent date the workout was completed
+// (any session logged or 'completed: true'). Returns YYYY-MM-DD strings.
+// Scans all workout_day:* keys via a single multiGet for efficiency.
+export async function getLastCompletedWorkoutDates(
+  workoutIds: string[],
+): Promise<Record<string, string>> {
+  if (workoutIds.length === 0) return {};
+  const allKeys = await AsyncStorage.getAllKeys();
+  const dayKeys = allKeys.filter((k) => k.startsWith(WORKOUT_DAY_PREFIX));
+  if (dayKeys.length === 0) return {};
+  const entries = await AsyncStorage.multiGet(dayKeys);
+  const result: Record<string, string> = {};
+  const idSet = new Set(workoutIds);
+  for (const [key, val] of entries) {
+    if (!val) continue;
+    const date = key.substring(WORKOUT_DAY_PREFIX.length);
+    let record: WorkoutDayRecord;
+    try {
+      record = JSON.parse(val) as WorkoutDayRecord;
+    } catch {
+      continue;
+    }
+    for (const wid of Object.keys(record)) {
+      if (!idSet.has(wid)) continue;
+      const item = record[wid];
+      const done = (item.sessions ?? 0) > 0 || item.completed;
+      if (done && (!result[wid] || date > result[wid])) {
+        result[wid] = date;
+      }
+    }
+  }
+  return result;
 }
 
 // Sum sessions across the week (Mon-Sun containing dateStr) for a weekly-goal
@@ -984,6 +1090,86 @@ export function groupLinkedSupplements(supplements: Supplement[]): Supplement[] 
   return result;
 }
 
+// ─── Reorder helpers (arrow-button replacement for drag-and-drop) ───
+
+// Build connected-component clusters from a section's supplements, using the same
+// BFS algorithm as `groupLinkedSupplements`. Each returned cluster is an array of
+// supplements that all reference each other directly or transitively.
+function buildSupplementClusters(sectionSupplements: Supplement[]): Supplement[][] {
+  const idToSup = new Map<string, Supplement>();
+  for (const s of sectionSupplements) idToSup.set(s.id, s);
+  const visited = new Set<string>();
+  const clusters: Supplement[][] = [];
+  for (const sup of sectionSupplements) {
+    if (visited.has(sup.id)) continue;
+    const cluster: Supplement[] = [];
+    const queue: string[] = [sup.id];
+    visited.add(sup.id);
+    while (queue.length > 0) {
+      const cid = queue.shift()!;
+      const c = idToSup.get(cid);
+      if (!c) continue;
+      cluster.push(c);
+      for (const linkedId of c.linkedSupplementIds || []) {
+        if (!visited.has(linkedId) && idToSup.has(linkedId)) {
+          visited.add(linkedId);
+          queue.push(linkedId);
+        }
+      }
+    }
+    clusters.push(cluster);
+  }
+  return clusters;
+}
+
+// Move the cluster containing `targetId` up or down by one cluster position
+// within its section. Linked supplements travel as a unit. Returns the unchanged
+// reference if the cluster is already at the edge (so callers can detect no-ops).
+export function moveSupplementClusterInSection(
+  sectionSupplements: Supplement[],
+  targetId: string,
+  direction: 'up' | 'down',
+): Supplement[] {
+  const clusters = buildSupplementClusters(sectionSupplements);
+  const targetIdx = clusters.findIndex((c) => c.some((s) => s.id === targetId));
+  if (targetIdx < 0) return sectionSupplements;
+  if (direction === 'up' && targetIdx === 0) return sectionSupplements;
+  if (direction === 'down' && targetIdx === clusters.length - 1) return sectionSupplements;
+  const otherIdx = direction === 'up' ? targetIdx - 1 : targetIdx + 1;
+  const next = clusters.slice();
+  [next[targetIdx], next[otherIdx]] = [next[otherIdx], next[targetIdx]];
+  return next.flat();
+}
+
+// Returns whether the cluster containing `targetId` sits at the first / last
+// position in its section. Used by the UI to disable arrow buttons at the edges.
+export function getSupplementClusterEdges(
+  sectionSupplements: Supplement[],
+  targetId: string,
+): { isFirst: boolean; isLast: boolean } {
+  const clusters = buildSupplementClusters(sectionSupplements);
+  const targetIdx = clusters.findIndex((c) => c.some((s) => s.id === targetId));
+  if (targetIdx < 0) return { isFirst: true, isLast: true };
+  return { isFirst: targetIdx === 0, isLast: targetIdx === clusters.length - 1 };
+}
+
+// Swap a workout with its neighbor in the given list. No clustering — workouts
+// don't link. Returns the unchanged reference if already at the edge.
+export function moveWorkoutInList(
+  workouts: Workout[],
+  targetId: string,
+  direction: 'up' | 'down',
+): Workout[] {
+  const idx = workouts.findIndex((w) => w.id === targetId);
+  if (idx < 0) return workouts;
+  if (direction === 'up' && idx === 0) return workouts;
+  if (direction === 'down' && idx === workouts.length - 1) return workouts;
+  const otherIdx = direction === 'up' ? idx - 1 : idx + 1;
+  const next = workouts.slice();
+  [next[idx], next[otherIdx]] = [next[otherIdx], next[idx]];
+  return next;
+}
+
 // ─── Labor items ───
 
 export async function getLaborItems(): Promise<LaborItem[]> {
@@ -1103,4 +1289,162 @@ export function estimateLaborStage(contractions: Contraction[]): StageEstimate {
   else stage = 'early';
 
   return { stage, avgDurationSec, avgIntervalMin, sampleSize: recent.length };
+}
+
+// ─── Baby ───
+
+function babyId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+// Feedings — breast sessions have a timer (start, then end); bottle feeds are instant
+// (end === start) and carry an amount.
+export async function getFeedings(): Promise<FeedingSession[]> {
+  const json = await AsyncStorage.getItem(FEEDINGS_KEY);
+  return json ? JSON.parse(json) : [];
+}
+
+export async function saveFeedings(list: FeedingSession[]): Promise<void> {
+  await AsyncStorage.setItem(FEEDINGS_KEY, JSON.stringify(list));
+}
+
+export async function startBreastFeeding(
+  start: string,
+  side: FeedSide,
+  hold?: FeedHold,
+  holdCustom?: string,
+): Promise<FeedingSession> {
+  const list = await getFeedings();
+  const item: FeedingSession = {
+    id: babyId('f'),
+    type: 'breast',
+    start,
+    side,
+    ...(hold ? { hold } : {}),
+    ...(holdCustom ? { holdCustom } : {}),
+  };
+  list.push(item);
+  await saveFeedings(list);
+  return item;
+}
+
+export async function endFeeding(id: string, end: string): Promise<void> {
+  const list = await getFeedings();
+  const idx = list.findIndex((f) => f.id === id);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], end };
+    await saveFeedings(list);
+  }
+}
+
+export async function addBottleFeeding(
+  time: string,
+  amount: number,
+  unit: AmountUnit,
+): Promise<FeedingSession> {
+  const list = await getFeedings();
+  const item: FeedingSession = {
+    id: babyId('f'),
+    type: 'bottle',
+    start: time,
+    end: time,
+    amount,
+    unit,
+  };
+  list.push(item);
+  await saveFeedings(list);
+  return item;
+}
+
+// Manual entry: log a complete breast-feeding session after the fact.
+export async function addBreastFeedingComplete(
+  start: string,
+  end: string,
+  side: FeedSide,
+  hold?: FeedHold,
+  holdCustom?: string,
+): Promise<FeedingSession> {
+  const list = await getFeedings();
+  const item: FeedingSession = {
+    id: babyId('f'),
+    type: 'breast',
+    start,
+    end,
+    side,
+    ...(hold ? { hold } : {}),
+    ...(holdCustom ? { holdCustom } : {}),
+  };
+  list.push(item);
+  await saveFeedings(list);
+  return item;
+}
+
+export async function deleteFeeding(id: string): Promise<void> {
+  const list = await getFeedings();
+  await saveFeedings(list.filter((f) => f.id !== id));
+}
+
+// Sleeps — mirrors the contraction pattern (start timer, then end).
+export async function getSleeps(): Promise<SleepSession[]> {
+  const json = await AsyncStorage.getItem(SLEEPS_KEY);
+  return json ? JSON.parse(json) : [];
+}
+
+export async function saveSleeps(list: SleepSession[]): Promise<void> {
+  await AsyncStorage.setItem(SLEEPS_KEY, JSON.stringify(list));
+}
+
+export async function startSleep(start: string): Promise<SleepSession> {
+  const list = await getSleeps();
+  const item: SleepSession = { id: babyId('s'), start };
+  list.push(item);
+  await saveSleeps(list);
+  return item;
+}
+
+export async function endSleep(id: string, end: string): Promise<void> {
+  const list = await getSleeps();
+  const idx = list.findIndex((x) => x.id === id);
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], end };
+    await saveSleeps(list);
+  }
+}
+
+// Manual entry: log a complete sleep session after the fact (covers overnight sleeps).
+export async function addSleepComplete(start: string, end: string): Promise<SleepSession> {
+  const list = await getSleeps();
+  const item: SleepSession = { id: babyId('s'), start, end };
+  list.push(item);
+  await saveSleeps(list);
+  return item;
+}
+
+export async function deleteSleep(id: string): Promise<void> {
+  const list = await getSleeps();
+  await saveSleeps(list.filter((x) => x.id !== id));
+}
+
+// Diapers — single-shot events. `addDiaper` already takes the timestamp, so manual
+// backdating works by passing a past ISO string.
+export async function getDiapers(): Promise<DiaperEvent[]> {
+  const json = await AsyncStorage.getItem(DIAPERS_KEY);
+  return json ? JSON.parse(json) : [];
+}
+
+export async function saveDiapers(list: DiaperEvent[]): Promise<void> {
+  await AsyncStorage.setItem(DIAPERS_KEY, JSON.stringify(list));
+}
+
+export async function addDiaper(kind: DiaperKind, time: string): Promise<DiaperEvent> {
+  const list = await getDiapers();
+  const item: DiaperEvent = { id: babyId('d'), kind, time };
+  list.push(item);
+  await saveDiapers(list);
+  return item;
+}
+
+export async function deleteDiaper(id: string): Promise<void> {
+  const list = await getDiapers();
+  await saveDiapers(list.filter((x) => x.id !== id));
 }

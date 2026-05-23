@@ -10,6 +10,7 @@ export interface Supplement {
   frequency: Frequency;
   dayOfWeek?: DayOfWeek; // only used when frequency === 'weekly'
   linkedSupplementIds?: string[]; // linked supplements share dose progress
+  sortOrder?: number; // user-defined order; lower = earlier in list
   createdAt: string;
 }
 
@@ -21,6 +22,7 @@ export interface Workout {
   frequency: WorkoutFrequency;
   assignedDays: DayOfWeek[]; // used when frequency === 'days'
   weeklyGoal?: number; // used when frequency === 'weekly' (e.g. 3 = "3 times any day this week")
+  sortOrder?: number; // user-defined order; lower = earlier in list
   createdAt: string;
 }
 
@@ -60,6 +62,8 @@ export interface AppSettings {
   partnerName: string; // e.g. "Amy" — used only in default reminder bodies
   remindersEnabled: boolean;
   reminders: ReminderConfig[];
+  // Visibility toggles for tab-bar buttons. Settings is always visible (not included).
+  enabledTabs: Record<'Calendar' | 'Labor' | 'Contractions' | 'Baby', boolean>;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -82,6 +86,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
       body: 'Hey Amy, have you taken all your supplements today?',
     },
   ],
+  enabledTabs: {
+    Calendar: true,
+    Labor: true,
+    Contractions: true,
+    Baby: true,
+  },
 };
 
 export type LaborCategory = 'position' | 'comfort';
@@ -106,6 +116,52 @@ export interface Contraction {
   end?: string;  // ISO timestamp; undefined while still in progress
 }
 
+// ─── Baby tracking ───
+export type FeedType = 'breast' | 'bottle';
+export type FeedSide = 'left' | 'right' | 'both';
+export type AmountUnit = 'ml' | 'oz';
+
+// Preset hold options. `holdCustom` carries free-text when the user picks "Custom".
+export const FEED_HOLDS = [
+  'Cradle',
+  'Cross-cradle',
+  'Football',
+  'Laid-back',
+  'Side-lying',
+] as const;
+export type FeedHold = (typeof FEED_HOLDS)[number];
+
+export interface FeedingSession {
+  id: string;
+  type: FeedType;
+  start: string;        // ISO timestamp
+  end?: string;         // ISO; undefined while breast feed in progress. Bottle: end === start.
+  // Breast-only fields:
+  side?: FeedSide;
+  hold?: FeedHold;
+  holdCustom?: string;  // populated when user typed a custom hold (hold left undefined)
+  // Bottle-only fields:
+  amount?: number;
+  unit?: AmountUnit;
+}
+
+export interface SleepSession {
+  id: string;
+  start: string;        // ISO timestamp
+  end?: string;         // ISO; undefined while in progress
+}
+
+export type DiaperKind = 'wet' | 'dirty' | 'both';
+
+export interface DiaperEvent {
+  id: string;
+  kind: DiaperKind;
+  time: string;         // ISO timestamp
+}
+
+// Tabs that can be hidden from Settings. `Settings` itself is intentionally not toggleable.
+export type ToggleableTab = 'Calendar' | 'Labor' | 'Contractions' | 'Baby';
+
 export type RootStackParamList = {
   Calendar: undefined;
   DayDetail: { date: string };
@@ -116,4 +172,5 @@ export type RootStackParamList = {
   Labor: undefined;
   AddEditLabor: { item?: LaborItem } | undefined;
   Contractions: undefined;
+  Baby: undefined;
 };

@@ -20,22 +20,28 @@ import WeeklyReportScreen from './src/screens/WeeklyReportScreen';
 import LaborScreen from './src/screens/LaborScreen';
 import AddEditLaborScreen from './src/screens/AddEditLaborScreen';
 import ContractionsScreen from './src/screens/ContractionsScreen';
+import BabyScreen from './src/screens/BabyScreen';
 import AppHeader from './src/components/AppHeader';
 import { scheduleReminders } from './src/notifications';
 import { RootStackParamList } from './src/types';
 import { getTabAnimationDirection } from './src/navAnimation';
+import { ALL_TAB_ORDER, NavbarRoute, getEnabledTabs } from './src/navTabs';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const TAB_ROUTES = ['Calendar', 'Labor', 'Contractions', 'Settings'] as const;
 
-function isTabRoute(name: string): name is (typeof TAB_ROUTES)[number] {
-  return (TAB_ROUTES as readonly string[]).includes(name);
+function isTabRoute(name: string): name is NavbarRoute {
+  return (ALL_TAB_ORDER as readonly string[]).includes(name);
 }
 
 function AppNavigator() {
   const { colors, isDark, settings } = useTheme();
   const containerRef = useNavigationContainerRef<RootStackParamList>();
-  const [routeName, setRouteName] = useState<keyof RootStackParamList>('Calendar');
+  const enabledTabs = getEnabledTabs(settings.enabledTabs);
+  // Use the first enabled tab so a freshly-launched app respects the user's tab settings
+  // (e.g. Calendar disabled → open on the next enabled tab). `ThemeProvider` blocks render
+  // until settings load, so `enabledTabs` is already populated on first mount.
+  const initialTab: NavbarRoute = enabledTabs[0];
+  const [routeName, setRouteName] = useState<keyof RootStackParamList>(initialTab);
 
   // Reschedule whenever the reminders list reference changes (added/removed/edited).
   useEffect(() => {
@@ -52,6 +58,14 @@ function AppNavigator() {
     const unsub = containerRef.addListener('state', onChange);
     return unsub;
   }, [containerRef]);
+
+  // If the user disables the tab they're currently on, redirect them to the first
+  // remaining enabled tab. Settings is always enabled, so `enabledTabs[0]` is never empty.
+  useEffect(() => {
+    if (isTabRoute(routeName) && !enabledTabs.includes(routeName as NavbarRoute)) {
+      containerRef.navigate(enabledTabs[0] as never);
+    }
+  }, [routeName, settings.enabledTabs]);
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -71,7 +85,7 @@ function AppNavigator() {
         {isTabRoute(routeName) && <AppHeader activeRoute={routeName} />}
         <View style={{ flex: 1 }}>
           <Stack.Navigator
-            initialRouteName="Calendar"
+            initialRouteName={initialTab}
             screenOptions={({ route }) => ({
               headerShown: false,
               animation: isTabRoute(route.name)
@@ -100,6 +114,7 @@ function AppNavigator() {
               options={{ animation: 'slide_from_bottom' }}
             />
             <Stack.Screen name="Contractions" component={ContractionsScreen} />
+            <Stack.Screen name="Baby" component={BabyScreen} />
           </Stack.Navigator>
         </View>
       </View>

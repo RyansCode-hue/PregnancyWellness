@@ -9,8 +9,23 @@ import {
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Workout, WorkoutDayRecord } from '../types';
-import { DAY_NAMES_SHORT } from '../storage/storage';
+import { DAY_NAMES_SHORT, parseDate, formatDate } from '../storage/storage';
 import { CheckIcon, NotesIcon, ChevronUpIcon } from './Icons';
+
+const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function formatLastDone(dateStr: string): string {
+  const today = parseDate(formatDate(new Date()));
+  const date = parseDate(dateStr);
+  const days = Math.round((today.getTime() - date.getTime()) / 86400000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return `${days} days ago`;
+  const weekday = DAY_NAMES_SHORT[date.getDay()];
+  const sameYear = date.getFullYear() === today.getFullYear();
+  const tail = sameYear ? '' : `, ${date.getFullYear()}`;
+  return `${weekday}, ${MONTH_ABBR[date.getMonth()]} ${date.getDate()}${tail}`;
+}
 
 interface WorkoutCardProps {
   workout: Workout;
@@ -27,6 +42,13 @@ interface WorkoutCardProps {
   onIncrementSession?: () => void;
   /** For 'weekly' frequency: tapping a filled circle removes one from today. */
   onDecrementSession?: () => void;
+  /** For 'weekly' frequency: most recent date this workout was logged (YYYY-MM-DD). */
+  lastCompletedDate?: string;
+  // Reorder buttons. If both callbacks are omitted the column is not rendered.
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 export default function WorkoutCard({
@@ -41,6 +63,11 @@ export default function WorkoutCard({
   weekCount,
   onIncrementSession,
   onDecrementSession,
+  lastCompletedDate,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
 }: WorkoutCardProps) {
   const s = makeStyles(colors);
   const completed = record?.completed || false;
@@ -104,6 +131,8 @@ export default function WorkoutCard({
     </View>
   );
 
+  const showMoveButtons = !!(onMoveUp || onMoveDown);
+
   return (
     <Swipeable
       ref={swipeableRef}
@@ -112,6 +141,7 @@ export default function WorkoutCard({
       friction={2}
     >
       <View style={[s.card, isCardComplete && s.cardComplete]}>
+      <View style={s.cardBody}>
       <View style={s.topRow}>
         {/* Checkbox — single big one for day-assigned workouts only */}
         {!isGoal && (
@@ -130,6 +160,11 @@ export default function WorkoutCard({
           <Text style={[s.name, isCardComplete && s.nameComplete]}>
             {workout.name}
           </Text>
+          {isGoal && lastCompletedDate && (
+            <Text style={s.lastDoneText}>
+              Last done: {formatLastDone(lastCompletedDate)}
+            </Text>
+          )}
           <Text style={s.daysText}>{daysLabel}</Text>
         </View>
 
@@ -197,6 +232,30 @@ export default function WorkoutCard({
         </View>
       )}
       </View>
+
+      {showMoveButtons && (
+        <View style={s.moveCol}>
+          <TouchableOpacity
+            style={[s.moveBtn, !canMoveUp && s.moveBtnDisabled]}
+            onPress={onMoveUp}
+            disabled={!canMoveUp || !onMoveUp}
+            activeOpacity={0.5}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            <Text style={[s.moveArrow, !canMoveUp && s.moveArrowDisabled]}>▲</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.moveBtn, !canMoveDown && s.moveBtnDisabled]}
+            onPress={onMoveDown}
+            disabled={!canMoveDown || !onMoveDown}
+            activeOpacity={0.5}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            <Text style={[s.moveArrow, !canMoveDown && s.moveArrowDisabled]}>▼</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+      </View>
     </Swipeable>
   );
 }
@@ -204,6 +263,8 @@ export default function WorkoutCard({
 function makeStyles(colors: ThemeColors) {
   return StyleSheet.create({
     card: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
       backgroundColor: colors.card,
       borderRadius: borderRadius.md,
       padding: spacing.md,
@@ -219,6 +280,36 @@ function makeStyles(colors: ThemeColors) {
     cardComplete: {
       borderLeftColor: colors.success,
       backgroundColor: colors.successLight,
+    },
+    cardBody: {
+      flex: 1,
+    },
+    // Right-side reorder column. Two stacked arrow buttons, vertically distributed.
+    moveCol: {
+      width: 32,
+      marginLeft: spacing.sm,
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 2,
+    },
+    moveBtn: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: borderRadius.sm,
+    },
+    moveBtnDisabled: {
+      opacity: 0.35,
+    },
+    moveArrow: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: '#F59E0B',
+      lineHeight: 16,
+    },
+    moveArrowDisabled: {
+      color: colors.textSubtle,
     },
     topRow: {
       flexDirection: 'row',
@@ -299,6 +390,12 @@ function makeStyles(colors: ThemeColors) {
     daysText: {
       fontSize: fontSize.sm,
       color: colors.textSubtle,
+      marginTop: 2,
+    },
+    lastDoneText: {
+      fontSize: fontSize.sm,
+      color: colors.primary,
+      fontWeight: '600',
       marginTop: 2,
     },
     notesToggle: {

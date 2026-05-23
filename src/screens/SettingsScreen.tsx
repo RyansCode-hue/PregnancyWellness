@@ -13,7 +13,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import { getPregnancyWeek, getDaysUntilDue, createReminder } from '../storage/storage';
-import { RootStackParamList, ReminderConfig } from '../types';
+import { RootStackParamList, ReminderConfig, ToggleableTab } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -594,6 +594,34 @@ export default function SettingsScreen({ navigation }: Props) {
               thumbColor="#FFFFFF"
             />
           </View>
+        </View>
+
+        {/* Visible Tabs */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Visible Tabs</Text>
+          <Text style={styles.sectionDesc}>
+            Hide tabs you don't use. Settings always stays visible.
+          </Text>
+          {(['Calendar', 'Labor', 'Contractions', 'Baby'] as ToggleableTab[]).map((tab) => (
+            <View
+              key={tab}
+              style={[styles.toggleRow, { marginTop: spacing.sm }]}
+            >
+              <View style={styles.toggleInfo}>
+                <Text style={styles.sectionTitle}>{tab}</Text>
+              </View>
+              <Switch
+                value={settings.enabledTabs[tab]}
+                onValueChange={(v) =>
+                  updateSettings({
+                    enabledTabs: { ...settings.enabledTabs, [tab]: v },
+                  })
+                }
+                trackColor={{ false: colors.border, true: colors.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          ))}
         </View>
 
         {/* Reminders */}

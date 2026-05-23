@@ -35,11 +35,17 @@ import {
   deleteSupplement,
   deleteWorkout,
   getWeeklyWorkoutCount,
+  getLastCompletedWorkoutDates,
   formatDate,
   getWeeklySupplementDoses,
   getWorkoutProgress,
   getDoseSourceRecord,
   groupLinkedSupplements,
+  saveSupplementOrder,
+  saveWorkoutOrder,
+  moveSupplementClusterInSection,
+  getSupplementClusterEdges,
+  moveWorkoutInList,
   DayCombinedStatus,
 } from '../storage/storage';
 import { RootStackParamList, Supplement, Workout, DayRecord, DoseSourceRecord, WorkoutDayRecord } from '../types';
@@ -67,6 +73,7 @@ export default function CalendarScreen({ navigation }: Props) {
   const [todayWorkouts, setTodayWorkouts] = useState<Workout[]>([]);
   const [workoutRecord, setWorkoutRecord] = useState<WorkoutDayRecord>({});
   const [weeklyWorkoutCounts, setWeeklyWorkoutCounts] = useState<Record<string, number>>({});
+  const [lastCompletedDates, setLastCompletedDates] = useState<Record<string, string>>({});
   const [showToday, setShowToday] = useState(false);
 
   useFocusEffect(
@@ -106,12 +113,15 @@ export default function CalendarScreen({ navigation }: Props) {
 
     // Weekly session counts for goal-frequency workouts shown today.
     const counts: Record<string, number> = {};
+    const weeklyIds: string[] = [];
     for (const w of tw) {
       if (w.frequency === 'weekly') {
         counts[w.id] = await getWeeklyWorkoutCount(w.id, todayStr);
+        weeklyIds.push(w.id);
       }
     }
     setWeeklyWorkoutCounts(counts);
+    setLastCompletedDates(await getLastCompletedWorkoutDates(weeklyIds));
   };
 
   const handlePrevMonth = () => {
@@ -200,6 +210,40 @@ export default function CalendarScreen({ navigation }: Props) {
   // Sort supplements: weekly first, then daily — grouped by linked clusters
   const weeklySups = groupLinkedSupplements(supplements.filter((sup) => sup.frequency === 'weekly'));
   const dailySups = groupLinkedSupplements(supplements.filter((sup) => sup.frequency === 'daily'));
+
+  // ─── Arrow-button reorder ───
+  // Moves the cluster containing `supId` up or down within its frequency section,
+  // then writes the merged full ordering to AsyncStorage. Linked supplements move
+  // together because `moveSupplementClusterInSection` operates on clusters.
+  const handleMoveSupplement = async (
+    supId: string,
+    frequency: 'daily' | 'weekly',
+    direction: 'up' | 'down',
+  ) => {
+    const section = frequency === 'daily' ? dailySups : weeklySups;
+    const reordered = moveSupplementClusterInSection(section, supId, direction);
+    if (reordered === section) return; // already at edge
+    const otherSection = frequency === 'daily' ? weeklySups : dailySups;
+    // Display order = weekly first, then daily — match it in persistence.
+    const newAll =
+      frequency === 'daily'
+        ? [...otherSection, ...reordered]
+        : [...reordered, ...otherSection];
+    setSupplements(newAll);
+    await saveSupplementOrder(newAll.map((sp) => sp.id));
+    loadData();
+  };
+
+  const handleMoveWorkout = async (workoutId: string, direction: 'up' | 'down') => {
+    const reordered = moveWorkoutInList(todayWorkouts, workoutId, direction);
+    if (reordered === todayWorkouts) return;
+    setTodayWorkouts(reordered);
+    const todayIds = reordered.map((w) => w.id);
+    const todaySet = new Set(todayIds);
+    const others = workoutsList.filter((w) => !todaySet.has(w.id)).map((w) => w.id);
+    await saveWorkoutOrder([...todayIds, ...others]);
+    loadData();
+  };
 
   const getDoses = (sup: Supplement): boolean[] => {
     return dayRecord[sup.id] || new Array(sup.dosesPerDay).fill(false);
@@ -353,76 +397,94 @@ export default function CalendarScreen({ navigation }: Props) {
 
             {showToday && (
               <View style={s.todaySection}>
-                {/* Weekly supplements first */}
                 {weeklySups.length > 0 && (
                   <>
                     <View style={s.todaySectionHeaderRow}>
                       <PillIcon size={14} color="#B45309" />
-                      <Text style={[s.todaySectionHeader, { color: '#B45309' }]}>Weekly</Text>
+                      <Text style={[s.todaySectionHeader, { color: '#B45309' }]}>
+                        Weekly
+                      </Text>
                     </View>
-                    {weeklySups.map((sup) => (
-                      <SupplementCard
-                        key={sup.id}
-                        supplement={sup}
-                        doses={getDoses(sup)}
-                        onToggleDose={(doseIndex) =>
-                          handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
-                        }
-                        onEdit={() =>
-                          navigation.navigate('AddEditSupplement', { supplement: sup })
-                        }
-                        onDelete={() => confirmDeleteSupplement(sup)}
-                        colors={colors}
-                        linkedNames={getLinkedNames(sup)}
-                        doseSources={doseSourceRecord[sup.id]}
-                        supplementNames={supplementNameMap}
-                      />
-                    ))}
+                    {weeklySups.map((sup) => {
+                      const edges = getSupplementClusterEdges(weeklySups, sup.id);
+                      return (
+                        <SupplementCard
+                          key={sup.id}
+                          supplement={sup}
+                          doses={getDoses(sup)}
+                          onToggleDose={(doseIndex) =>
+                            handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
+                          }
+                          onEdit={() =>
+                            navigation.navigate('AddEditSupplement', { supplement: sup })
+                          }
+                          onDelete={() => confirmDeleteSupplement(sup)}
+                          colors={colors}
+                          linkedNames={getLinkedNames(sup)}
+                          doseSources={doseSourceRecord[sup.id]}
+                          supplementNames={supplementNameMap}
+                          onMoveUp={() => handleMoveSupplement(sup.id, 'weekly', 'up')}
+                          onMoveDown={() => handleMoveSupplement(sup.id, 'weekly', 'down')}
+                          canMoveUp={!edges.isFirst}
+                          canMoveDown={!edges.isLast}
+                        />
+                      );
+                    })}
                   </>
                 )}
-
-                {/* Daily supplements */}
                 {dailySups.length > 0 && (
                   <>
-                    <View style={[s.todaySectionHeaderRow, weeklySups.length > 0 && { marginTop: spacing.md }]}>
+                    <View
+                      style={[
+                        s.todaySectionHeaderRow,
+                        weeklySups.length > 0 && { marginTop: spacing.md },
+                      ]}
+                    >
                       <PillIcon size={14} color={colors.primary} />
                       <Text style={s.todaySectionHeader}>Daily</Text>
                     </View>
-                    {dailySups.map((sup) => (
-                      <SupplementCard
-                        key={sup.id}
-                        supplement={sup}
-                        doses={getDoses(sup)}
-                        onToggleDose={(doseIndex) =>
-                          handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
-                        }
-                        onEdit={() =>
-                          navigation.navigate('AddEditSupplement', { supplement: sup })
-                        }
-                        onDelete={() => confirmDeleteSupplement(sup)}
-                        colors={colors}
-                        linkedNames={getLinkedNames(sup)}
-                        doseSources={doseSourceRecord[sup.id]}
-                        supplementNames={supplementNameMap}
-                      />
-                    ))}
+                    {dailySups.map((sup) => {
+                      const edges = getSupplementClusterEdges(dailySups, sup.id);
+                      return (
+                        <SupplementCard
+                          key={sup.id}
+                          supplement={sup}
+                          doses={getDoses(sup)}
+                          onToggleDose={(doseIndex) =>
+                            handleToggleDose(sup.id, doseIndex, sup.dosesPerDay)
+                          }
+                          onEdit={() =>
+                            navigation.navigate('AddEditSupplement', { supplement: sup })
+                          }
+                          onDelete={() => confirmDeleteSupplement(sup)}
+                          colors={colors}
+                          linkedNames={getLinkedNames(sup)}
+                          doseSources={doseSourceRecord[sup.id]}
+                          supplementNames={supplementNameMap}
+                          onMoveUp={() => handleMoveSupplement(sup.id, 'daily', 'up')}
+                          onMoveDown={() => handleMoveSupplement(sup.id, 'daily', 'down')}
+                          canMoveUp={!edges.isFirst}
+                          canMoveDown={!edges.isLast}
+                        />
+                      );
+                    })}
                   </>
                 )}
-
-                {/* Workouts */}
                 {todayWorkouts.length > 0 && (
                   <>
                     <View style={[s.todaySectionHeaderRow, { marginTop: spacing.md }]}>
                       <DumbbellIcon size={14} color={colors.textSubtle} strokeWidth={2} />
                       <Text style={s.todaySectionHeader}>Workouts</Text>
                     </View>
-                    {todayWorkouts.map((workout) => (
+                    {todayWorkouts.map((workout, idx) => (
                       <WorkoutCard
                         key={workout.id}
                         workout={workout}
                         record={workoutRecord[workout.id]}
                         onToggle={() => handleToggleWorkout(workout.id)}
-                        onSaveNotes={(notes) => handleSaveWorkoutNotes(workout.id, notes)}
+                        onSaveNotes={(notes) =>
+                          handleSaveWorkoutNotes(workout.id, notes)
+                        }
                         onEdit={() =>
                           navigation.navigate('AddEditWorkout', { workout })
                         }
@@ -433,8 +495,17 @@ export default function CalendarScreen({ navigation }: Props) {
                             ? weeklyWorkoutCounts[workout.id] ?? 0
                             : undefined
                         }
-                        onIncrementSession={() => handleIncrementSession(workout.id)}
-                        onDecrementSession={() => handleDecrementSession(workout.id)}
+                        onIncrementSession={() =>
+                          handleIncrementSession(workout.id)
+                        }
+                        onDecrementSession={() =>
+                          handleDecrementSession(workout.id)
+                        }
+                        lastCompletedDate={lastCompletedDates[workout.id]}
+                        onMoveUp={() => handleMoveWorkout(workout.id, 'up')}
+                        onMoveDown={() => handleMoveWorkout(workout.id, 'down')}
+                        canMoveUp={idx > 0}
+                        canMoveDown={idx < todayWorkouts.length - 1}
                       />
                     ))}
                   </>

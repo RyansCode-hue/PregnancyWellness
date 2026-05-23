@@ -37,7 +37,13 @@ import {
   getWeeklySupplementDoses,
   getDoseSourceRecord,
   getWeeklyWorkoutCount,
+  getLastCompletedWorkoutDates,
   groupLinkedSupplements,
+  saveSupplementOrder,
+  saveWorkoutOrder,
+  moveSupplementClusterInSection,
+  getSupplementClusterEdges,
+  moveWorkoutInList,
   DAY_NAMES_FULL,
 } from '../storage/storage';
 import { PillIcon, DumbbellIcon, BackIcon } from '../components/Icons';
@@ -69,6 +75,7 @@ export default function DayDetailScreen({ route, navigation }: Props) {
   const [workouts, setWorkouts] = useState<Workout[]>([]);
   const [workoutRecord, setWorkoutRecord] = useState<WorkoutDayRecord>({});
   const [weeklyWorkoutCounts, setWeeklyWorkoutCounts] = useState<Record<string, number>>({});
+  const [lastCompletedDates, setLastCompletedDates] = useState<Record<string, string>>({});
   const [undoState, setUndoState] = useState<UndoState | null>(null);
 
   const undoOpacity = useRef(new Animated.Value(0)).current;
@@ -116,12 +123,15 @@ export default function DayDetailScreen({ route, navigation }: Props) {
 
     // Weekly counts only matter for goal-frequency workouts
     const counts: Record<string, number> = {};
+    const weeklyIds: string[] = [];
     for (const w of todayWorkouts) {
       if (w.frequency === 'weekly') {
         counts[w.id] = await getWeeklyWorkoutCount(w.id, date);
+        weeklyIds.push(w.id);
       }
     }
     setWeeklyWorkoutCounts(counts);
+    setLastCompletedDates(await getLastCompletedWorkoutDates(weeklyIds));
   };
 
   // ─── Undo system ───
@@ -318,6 +328,41 @@ export default function DayDetailScreen({ route, navigation }: Props) {
   const dailySups = groupLinkedSupplements(supplements.filter((sup) => sup.frequency === 'daily'));
   const weeklySups = groupLinkedSupplements(supplements.filter((sup) => sup.frequency === 'weekly'));
 
+  // ─── Arrow-button reorder ───
+  // Identical pattern to CalendarScreen: cluster-aware for supplements, plain swap
+  // for workouts. The persistence layer (saveSupplementOrder / saveWorkoutOrder)
+  // applies globally — reordering on a DayDetail page also affects CalendarScreen.
+  const handleMoveSupplement = async (
+    supId: string,
+    frequency: 'daily' | 'weekly',
+    direction: 'up' | 'down',
+  ) => {
+    const section = frequency === 'daily' ? dailySups : weeklySups;
+    const reordered = moveSupplementClusterInSection(section, supId, direction);
+    if (reordered === section) return;
+    const otherSection = frequency === 'daily' ? weeklySups : dailySups;
+    const newAll =
+      frequency === 'daily'
+        ? [...otherSection, ...reordered]
+        : [...reordered, ...otherSection];
+    setSupplements(newAll);
+    await saveSupplementOrder(newAll.map((sp) => sp.id));
+    loadData();
+  };
+
+  const handleMoveWorkout = async (workoutId: string, direction: 'up' | 'down') => {
+    const reordered = moveWorkoutInList(workouts, workoutId, direction);
+    if (reordered === workouts) return;
+    setWorkouts(reordered);
+    const todayIds = reordered.map((w) => w.id);
+    const todaySet = new Set(todayIds);
+    const others = (await getWorkouts())
+      .filter((w) => !todaySet.has(w.id))
+      .map((w) => w.id);
+    await saveWorkoutOrder([...todayIds, ...others]);
+    loadData();
+  };
+
   // ─── Progress calc ───
 
   const getDoses = (supplement: Supplement): boolean[] => {
@@ -386,37 +431,34 @@ export default function DayDetailScreen({ route, navigation }: Props) {
       </View>
 
       {/* Content */}
-      <ScrollView
-        style={s.scrollView}
-        contentContainerStyle={s.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {!hasContent ? (
-          <View style={s.emptyState}>
-            <PillIcon size={64} color={colors.checkboxEmpty} strokeWidth={1.5} />
-            <Text style={s.emptyTitle}>Nothing scheduled</Text>
-            <Text style={s.emptySubtitle}>
-              Go back and add supplements or workouts to get started
-            </Text>
-          </View>
-        ) : (
-          <>
-            {isFuture && (
-              <View style={s.futureBanner}>
-                <Text style={s.futureBannerText}>
-                  Future date — view only
-                </Text>
+      {!hasContent ? (
+        <View style={s.emptyState}>
+          <PillIcon size={64} color={colors.checkboxEmpty} strokeWidth={1.5} />
+          <Text style={s.emptyTitle}>Nothing scheduled</Text>
+          <Text style={s.emptySubtitle}>
+            Go back and add supplements or workouts to get started
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={s.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {isFuture && (
+            <View style={s.futureBanner}>
+              <Text style={s.futureBannerText}>Future date — view only</Text>
+            </View>
+          )}
+
+          {dailySups.length > 0 && (
+            <>
+              <View style={s.sectionHeaderRow}>
+                <PillIcon size={16} color={colors.primary} strokeWidth={2} />
+                <Text style={s.sectionHeader}>Daily</Text>
               </View>
-            )}
-
-            {/* Daily Supplements Section */}
-            {dailySups.length > 0 && (
-              <>
-                <View style={s.sectionHeaderRow}>
-                  <PillIcon size={16} color={colors.primary} strokeWidth={2} />
-                  <Text style={s.sectionHeader}>Daily</Text>
-                </View>
-                {dailySups.map((sup) => (
+              {dailySups.map((sup) => {
+                const edges = getSupplementClusterEdges(dailySups, sup.id);
+                return (
                   <SupplementCard
                     key={sup.id}
                     supplement={sup}
@@ -424,26 +466,43 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     onToggleDose={(doseIndex) =>
                       handleToggleDose(sup.id, doseIndex, sup.dosesPerDay, sup.name)
                     }
-                    onEdit={() => navigation.navigate('AddEditSupplement', { supplement: sup })}
+                    onEdit={() =>
+                      navigation.navigate('AddEditSupplement', { supplement: sup })
+                    }
                     onDelete={() => confirmDeleteSupplement(sup)}
                     disabled={isFuture}
                     colors={colors}
                     linkedNames={getLinkedNames(sup)}
                     doseSources={doseSourceRecord[sup.id]}
                     supplementNames={supplementNameMap}
+                    onMoveUp={
+                      isFuture ? undefined : () => handleMoveSupplement(sup.id, 'daily', 'up')
+                    }
+                    onMoveDown={
+                      isFuture ? undefined : () => handleMoveSupplement(sup.id, 'daily', 'down')
+                    }
+                    canMoveUp={!edges.isFirst}
+                    canMoveDown={!edges.isLast}
                   />
-                ))}
-              </>
-            )}
+                );
+              })}
+            </>
+          )}
 
-            {/* Weekly Supplements Section */}
-            {weeklySups.length > 0 && (
-              <>
-                <View style={[s.sectionHeaderRow, dailySups.length > 0 && { marginTop: spacing.md }]}>
-                  <PillIcon size={16} color="#B45309" strokeWidth={2} />
-                  <Text style={[s.sectionHeader, { color: '#B45309' }]}>Weekly</Text>
-                </View>
-                {weeklySups.map((sup) => (
+          {weeklySups.length > 0 && (
+            <>
+              <View
+                style={[
+                  s.sectionHeaderRow,
+                  dailySups.length > 0 && { marginTop: spacing.md },
+                ]}
+              >
+                <PillIcon size={16} color="#B45309" strokeWidth={2} />
+                <Text style={[s.sectionHeader, { color: '#B45309' }]}>Weekly</Text>
+              </View>
+              {weeklySups.map((sup) => {
+                const edges = getSupplementClusterEdges(weeklySups, sup.id);
+                return (
                   <SupplementCard
                     key={sup.id}
                     supplement={sup}
@@ -451,52 +510,79 @@ export default function DayDetailScreen({ route, navigation }: Props) {
                     onToggleDose={(doseIndex) =>
                       handleToggleDose(sup.id, doseIndex, sup.dosesPerDay, sup.name)
                     }
-                    onEdit={() => navigation.navigate('AddEditSupplement', { supplement: sup })}
+                    onEdit={() =>
+                      navigation.navigate('AddEditSupplement', { supplement: sup })
+                    }
                     onDelete={() => confirmDeleteSupplement(sup)}
                     disabled={isFuture}
                     colors={colors}
                     linkedNames={getLinkedNames(sup)}
                     doseSources={doseSourceRecord[sup.id]}
                     supplementNames={supplementNameMap}
-                  />
-                ))}
-              </>
-            )}
-
-            {/* Workouts Section */}
-            {workouts.length > 0 && (
-              <>
-                <View style={[s.sectionHeaderRow, supplements.length > 0 && { marginTop: spacing.lg }]}>
-                  <DumbbellIcon size={16} color={colors.textSubtle} strokeWidth={2} />
-                  <Text style={s.sectionHeader}>Workouts</Text>
-                </View>
-                {workouts.map((workout) => (
-                  <WorkoutCard
-                    key={workout.id}
-                    workout={workout}
-                    record={workoutRecord[workout.id]}
-                    onToggle={() => handleToggleWorkout(workout.id, workout.name)}
-                    onSaveNotes={(notes) => handleSaveWorkoutNotes(workout.id, notes)}
-                    onEdit={() => navigation.navigate('AddEditWorkout', { workout })}
-                    onDelete={() => confirmDeleteWorkout(workout)}
-                    disabled={isFuture}
-                    colors={colors}
-                    weekCount={
-                      workout.frequency === 'weekly'
-                        ? weeklyWorkoutCounts[workout.id] ?? 0
-                        : undefined
+                    onMoveUp={
+                      isFuture ? undefined : () => handleMoveSupplement(sup.id, 'weekly', 'up')
                     }
-                    onIncrementSession={() => handleIncrementSession(workout.id)}
-                    onDecrementSession={() => handleDecrementSession(workout.id)}
+                    onMoveDown={
+                      isFuture ? undefined : () => handleMoveSupplement(sup.id, 'weekly', 'down')
+                    }
+                    canMoveUp={!edges.isFirst}
+                    canMoveDown={!edges.isLast}
                   />
-                ))}
-              </>
-            )}
+                );
+              })}
+            </>
+          )}
 
-            <Text style={s.hint}>Swipe any item left to edit or delete</Text>
-          </>
-        )}
-      </ScrollView>
+          {workouts.length > 0 && (
+            <>
+              <View
+                style={[
+                  s.sectionHeaderRow,
+                  supplements.length > 0 && { marginTop: spacing.lg },
+                ]}
+              >
+                <DumbbellIcon size={16} color={colors.textSubtle} strokeWidth={2} />
+                <Text style={s.sectionHeader}>Workouts</Text>
+              </View>
+              {workouts.map((workout, idx) => (
+                <WorkoutCard
+                  key={workout.id}
+                  workout={workout}
+                  record={workoutRecord[workout.id]}
+                  onToggle={() => handleToggleWorkout(workout.id, workout.name)}
+                  onSaveNotes={(notes) => handleSaveWorkoutNotes(workout.id, notes)}
+                  onEdit={() => navigation.navigate('AddEditWorkout', { workout })}
+                  onDelete={() => confirmDeleteWorkout(workout)}
+                  disabled={isFuture}
+                  colors={colors}
+                  weekCount={
+                    workout.frequency === 'weekly'
+                      ? weeklyWorkoutCounts[workout.id] ?? 0
+                      : undefined
+                  }
+                  onIncrementSession={() => handleIncrementSession(workout.id)}
+                  onDecrementSession={() => handleDecrementSession(workout.id)}
+                  lastCompletedDate={lastCompletedDates[workout.id]}
+                  onMoveUp={
+                    isFuture ? undefined : () => handleMoveWorkout(workout.id, 'up')
+                  }
+                  onMoveDown={
+                    isFuture ? undefined : () => handleMoveWorkout(workout.id, 'down')
+                  }
+                  canMoveUp={idx > 0}
+                  canMoveDown={idx < workouts.length - 1}
+                />
+              ))}
+            </>
+          )}
+
+          <Text style={s.hint}>
+            {isFuture
+              ? 'Swipe any item left to edit or delete'
+              : 'Use ▲ ▼ to reorder · Swipe left to edit or delete'}
+          </Text>
+        </ScrollView>
+      )}
 
       {/* Undo Toast */}
       {undoState && (

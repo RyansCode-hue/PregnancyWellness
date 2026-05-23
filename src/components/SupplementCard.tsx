@@ -23,6 +23,11 @@ interface SupplementCardProps {
   linkedNames?: string[]; // names of linked supplements
   doseSources?: (string | null)[]; // source supplement ID per dose
   supplementNames?: Record<string, string>; // id -> name mapping for source labels
+  // Reorder buttons. If both callbacks are omitted the column is not rendered.
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  canMoveUp?: boolean;
+  canMoveDown?: boolean;
 }
 
 export default function SupplementCard({
@@ -36,6 +41,10 @@ export default function SupplementCard({
   linkedNames,
   doseSources,
   supplementNames,
+  onMoveUp,
+  onMoveDown,
+  canMoveUp,
+  canMoveDown,
 }: SupplementCardProps) {
   const s = makeStyles(colors);
   const completedCount = doses.filter(Boolean).length;
@@ -84,6 +93,8 @@ export default function SupplementCard({
     </View>
   );
 
+  const showMoveButtons = !!(onMoveUp || onMoveDown);
+
   return (
     <Swipeable
       ref={swipeableRef}
@@ -92,59 +103,84 @@ export default function SupplementCard({
       friction={2}
     >
     <View style={[s.card, allDone && s.cardComplete]}>
-      {/* Header row */}
-      <View style={s.headerRow}>
-        <View style={s.nameContainer}>
-          <Text style={[s.name, allDone && s.nameComplete]}>
-            {supplement.name}
-          </Text>
-          {frequencyLabel && (
-            <Text style={s.freqText}>{frequencyLabel}</Text>
-          )}
-          {hasLinks && (
-            <Text style={s.linkedText}>
-              Linked with {linkedNames!.join(', ')}
+      <View style={s.cardBody}>
+        {/* Header row */}
+        <View style={s.headerRow}>
+          <View style={s.nameContainer}>
+            <Text style={[s.name, allDone && s.nameComplete]}>
+              {supplement.name}
             </Text>
-          )}
-          {supplement.whenToTake ? (
-            <Text style={s.whenText}>{supplement.whenToTake}</Text>
-          ) : null}
+            {frequencyLabel && (
+              <Text style={s.freqText}>{frequencyLabel}</Text>
+            )}
+            {hasLinks && (
+              <Text style={s.linkedText}>
+                Linked with {linkedNames!.join(', ')}
+              </Text>
+            )}
+            {supplement.whenToTake ? (
+              <Text style={s.whenText}>{supplement.whenToTake}</Text>
+            ) : null}
+          </View>
+          <Text style={[s.countText, allDone && s.countComplete]}>
+            {completedCount}/{supplement.dosesPerDay}
+          </Text>
         </View>
-        <Text style={[s.countText, allDone && s.countComplete]}>
-          {completedCount}/{supplement.dosesPerDay}
-        </Text>
+
+        {/* Checkboxes */}
+        <View style={s.checkboxRow}>
+          {doses.map((checked, i) => {
+            const sourceLabel = checked ? getSourceLabel(i) : null;
+            return (
+              <View key={i} style={s.checkboxContainer}>
+                <TouchableOpacity
+                  style={[
+                    s.checkbox,
+                    checked && s.checkboxChecked,
+                  ]}
+                  onPress={() => !disabled && onToggleDose(i)}
+                  activeOpacity={0.6}
+                  disabled={disabled}
+                >
+                  {checked && <CheckIcon size={16} color="#FFFFFF" strokeWidth={3} />}
+                </TouchableOpacity>
+                {sourceLabel && hasLinks && (
+                  <Text style={s.sourceLabel} numberOfLines={1}>
+                    {sourceLabel}
+                  </Text>
+                )}
+              </View>
+            );
+          })}
+        </View>
+
+        {allDone && (
+          <View style={s.completeBadge}>
+            <Text style={s.completeBadgeText}>All taken!</Text>
+          </View>
+        )}
       </View>
 
-      {/* Checkboxes */}
-      <View style={s.checkboxRow}>
-        {doses.map((checked, i) => {
-          const sourceLabel = checked ? getSourceLabel(i) : null;
-          return (
-            <View key={i} style={s.checkboxContainer}>
-              <TouchableOpacity
-                style={[
-                  s.checkbox,
-                  checked && s.checkboxChecked,
-                ]}
-                onPress={() => !disabled && onToggleDose(i)}
-                activeOpacity={0.6}
-                disabled={disabled}
-              >
-                {checked && <CheckIcon size={16} color="#FFFFFF" strokeWidth={3} />}
-              </TouchableOpacity>
-              {sourceLabel && hasLinks && (
-                <Text style={s.sourceLabel} numberOfLines={1}>
-                  {sourceLabel}
-                </Text>
-              )}
-            </View>
-          );
-        })}
-      </View>
-
-      {allDone && (
-        <View style={s.completeBadge}>
-          <Text style={s.completeBadgeText}>All taken!</Text>
+      {showMoveButtons && (
+        <View style={s.moveCol}>
+          <TouchableOpacity
+            style={[s.moveBtn, !canMoveUp && s.moveBtnDisabled]}
+            onPress={onMoveUp}
+            disabled={!canMoveUp || !onMoveUp}
+            activeOpacity={0.5}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            <Text style={[s.moveArrow, !canMoveUp && s.moveArrowDisabled]}>▲</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.moveBtn, !canMoveDown && s.moveBtnDisabled]}
+            onPress={onMoveDown}
+            disabled={!canMoveDown || !onMoveDown}
+            activeOpacity={0.5}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            <Text style={[s.moveArrow, !canMoveDown && s.moveArrowDisabled]}>▼</Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -155,6 +191,8 @@ export default function SupplementCard({
 function makeStyles(colors: ThemeColors) {
   return StyleSheet.create({
     card: {
+      flexDirection: 'row',
+      alignItems: 'stretch',
       backgroundColor: colors.card,
       borderRadius: borderRadius.md,
       padding: spacing.md,
@@ -170,6 +208,36 @@ function makeStyles(colors: ThemeColors) {
     cardComplete: {
       borderLeftColor: colors.success,
       backgroundColor: colors.successLight,
+    },
+    cardBody: {
+      flex: 1,
+    },
+    // Right-side reorder column. Two stacked arrow buttons, vertically distributed.
+    moveCol: {
+      width: 32,
+      marginLeft: spacing.sm,
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 2,
+    },
+    moveBtn: {
+      width: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: borderRadius.sm,
+    },
+    moveBtnDisabled: {
+      opacity: 0.35,
+    },
+    moveArrow: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.primary,
+      lineHeight: 16,
+    },
+    moveArrowDisabled: {
+      color: colors.textSubtle,
     },
     headerRow: {
       flexDirection: 'row',
