@@ -204,6 +204,65 @@ export function TrashIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconPr
   );
 }
 
+// Baby bottle icon — used for the Baby tracking nav button.
+// A rounded-rect bottle body with a nipple cap on top and two measurement marks.
+export function BabyIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      {/* Nipple cap */}
+      <Path
+        d="M9 3h6"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <Path
+        d="M10 3v2a2 2 0 0 0 4 0V3"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Cap ring */}
+      <Rect
+        x="7.5"
+        y="5"
+        width="9"
+        height="2.5"
+        rx="0.6"
+        stroke={color}
+        strokeWidth={strokeWidth}
+      />
+      {/* Bottle body */}
+      <Path
+        d="M8 7.5h8v11a2.5 2.5 0 0 1-2.5 2.5h-3A2.5 2.5 0 0 1 8 18.5v-11Z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+      />
+      {/* Measurement marks */}
+      <Line
+        x1="9.5"
+        y1="12"
+        x2="11"
+        y2="12"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <Line
+        x1="9.5"
+        y1="15"
+        x2="11"
+        y2="15"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 // Back arrow icon
 export function BackIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconProps) {
   return (
