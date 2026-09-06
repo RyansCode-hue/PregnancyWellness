@@ -13,6 +13,12 @@ export const ALL_TAB_ORDER = [
 
 export type NavbarRoute = (typeof ALL_TAB_ORDER)[number];
 
+// Tabs the user may hide, in display order. Derived from ALL_TAB_ORDER so a new tab
+// only has to be added in one place.
+export const TOGGLEABLE_TABS: ToggleableTab[] = ALL_TAB_ORDER.filter(
+  (r): r is ToggleableTab => r !== 'Settings',
+);
+
 /**
  * Filter the canonical order down to the tabs the user has enabled in settings.
  * Settings is always included regardless of `enabledTabs` so the user can always reach it.

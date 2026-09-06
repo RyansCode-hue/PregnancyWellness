@@ -8,8 +8,9 @@ export interface Supplement {
   dosesPerDay: number;
   whenToTake?: string;
   frequency: Frequency;
-  dayOfWeek?: DayOfWeek; // only used when frequency === 'weekly'
-  linkedSupplementIds?: string[]; // linked supplements share dose progress
+  // Linked supplements share dose progress. Links are only valid between supplements
+  // of the same frequency; storage rejects cross-frequency links.
+  linkedSupplementIds?: string[];
   sortOrder?: number; // user-defined order; lower = earlier in list
   createdAt: string;
 }
@@ -21,6 +22,7 @@ export interface Workout {
   name: string;
   frequency: WorkoutFrequency;
   assignedDays: DayOfWeek[]; // used when frequency === 'days'
+  timesPerDay?: number; // used when frequency === 'days'; sessions needed for the day to count (default 1)
   weeklyGoal?: number; // used when frequency === 'weekly' (e.g. 3 = "3 times any day this week")
   sortOrder?: number; // user-defined order; lower = earlier in list
   createdAt: string;
@@ -39,11 +41,13 @@ export interface DoseSourceRecord {
 
 export interface WorkoutDayRecord {
   [workoutId: string]: {
-    // 'days' frequency uses this boolean (one per assigned day).
-    completed: boolean;
-    // 'weekly' frequency uses this counter (sessions logged on this day).
-    // Lets you tap multiple times on the same day to log multiple sessions.
+    // Number of sessions logged on this day. This is the source of truth for both
+    // frequencies; read it through `getWorkoutSessions` so legacy records that only
+    // carry `completed` still count as one session.
     sessions?: number;
+    // Legacy flag from before the session counter existed. Kept in sync on write
+    // (true when sessions > 0) but never read directly by new code.
+    completed: boolean;
     notes?: string;
   };
 }
@@ -59,7 +63,7 @@ export interface ReminderConfig {
 export interface AppSettings {
   dueDate?: string; // ISO date string (YYYY-MM-DD)
   darkMode: boolean;
-  partnerName: string; // e.g. "Amy" — used only in default reminder bodies
+  partnerName: string; // substituted for the `{name}` placeholder in reminder bodies
   remindersEnabled: boolean;
   reminders: ReminderConfig[];
   // Visibility toggles for tab-bar buttons. Settings is always visible (not included).
@@ -76,14 +80,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
       hour: 8,
       minute: 0,
       title: 'Good morning!',
-      body: 'Hey Amy, remember to take your supplements today!',
+      body: 'Hey {name}, remember to take your supplements today!',
     },
     {
       id: 'evening',
       hour: 20,
       minute: 0,
       title: 'Evening check-in',
-      body: 'Hey Amy, have you taken all your supplements today?',
+      body: 'Hey {name}, have you taken all your supplements today?',
     },
   ],
   enabledTabs: {

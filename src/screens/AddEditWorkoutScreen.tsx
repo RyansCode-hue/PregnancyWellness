@@ -40,6 +40,9 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
   const [weeklyGoal, setWeeklyGoal] = useState<string>(
     existing?.weeklyGoal ? String(existing.weeklyGoal) : '3'
   );
+  const [timesPerDay, setTimesPerDay] = useState<string>(
+    existing?.timesPerDay ? String(existing.timesPerDay) : '1'
+  );
 
   const toggleDay = (day: DayOfWeek) => {
     setAssignedDays((prev) =>
@@ -56,6 +59,7 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
   };
 
   const parsedGoal = Math.max(1, Math.min(7, parseInt(weeklyGoal, 10) || 0));
+  const parsedTimesPerDay = Math.max(1, Math.min(9, parseInt(timesPerDay, 10) || 0));
   const goalValid = frequency !== 'weekly' || parsedGoal >= 1;
   const daysValid = frequency !== 'days' || assignedDays.length > 0;
   const canSave = !!name.trim() && goalValid && daysValid;
@@ -80,6 +84,7 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
       name: trimmedName,
       frequency,
       assignedDays: frequency === 'days' ? assignedDays : [],
+      timesPerDay: frequency === 'days' && parsedTimesPerDay > 1 ? parsedTimesPerDay : undefined,
       weeklyGoal: frequency === 'weekly' ? parsedGoal : undefined,
       createdAt: existing?.createdAt || new Date().toISOString(),
     });
@@ -96,7 +101,9 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
   const previewLabel =
     frequency === 'weekly'
       ? `${parsedGoal}× per week (any day)`
-      : daysLabel;
+      : parsedTimesPerDay > 1
+        ? `${daysLabel} · ${parsedTimesPerDay}× per day`
+        : daysLabel;
 
   return (
     <SafeAreaView style={s.container}>
@@ -201,6 +208,43 @@ export default function AddEditWorkoutScreen({ route, navigation }: Props) {
                   );
                 })}
               </View>
+            </View>
+          )}
+
+          {/* Times per day (only for 'days' frequency) */}
+          {frequency === 'days' && (
+            <View style={s.fieldGroup}>
+              <Text style={s.label}>How many times per day?</Text>
+              <View style={s.goalRow}>
+                <TouchableOpacity
+                  style={s.goalStep}
+                  onPress={() => setTimesPerDay(String(Math.max(1, parsedTimesPerDay - 1)))}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.goalStepText}>−</Text>
+                </TouchableOpacity>
+                <TextInput
+                  style={s.goalInput}
+                  value={timesPerDay}
+                  onChangeText={(t) => setTimesPerDay(t.replace(/[^0-9]/g, ''))}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  selectTextOnFocus
+                />
+                <TouchableOpacity
+                  style={s.goalStep}
+                  onPress={() => setTimesPerDay(String(Math.min(9, parsedTimesPerDay + 1)))}
+                  activeOpacity={0.7}
+                >
+                  <Text style={s.goalStepText}>+</Text>
+                </TouchableOpacity>
+                <Text style={s.goalSuffix}>per day</Text>
+              </View>
+              {parsedTimesPerDay > 1 && (
+                <Text style={s.goalHint}>
+                  You'll get {parsedTimesPerDay} circles to tick off through the day.
+                </Text>
+              )}
             </View>
           )}
 

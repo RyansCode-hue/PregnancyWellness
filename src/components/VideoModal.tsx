@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
+  Alert,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useTheme } from '../ThemeContext';
@@ -51,7 +52,10 @@ export default function VideoModal({ visible, videoUrl, onClose }: VideoModalPro
   // Non-YouTube URL → fall back to the system browser instead of embedding.
   useEffect(() => {
     if (visible && videoUrl && !ytId) {
-      Linking.openURL(videoUrl).catch(() => {});
+      Linking.openURL(videoUrl).catch((err) => {
+        console.error('Failed to open video link', videoUrl, err);
+        Alert.alert('Could not open video', 'No app on this device can open that link.');
+      });
       onClose();
     }
   }, [visible, videoUrl, ytId, onClose]);

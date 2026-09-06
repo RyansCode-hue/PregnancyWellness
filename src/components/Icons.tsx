@@ -189,21 +189,6 @@ export function TimerIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconPr
 }
 
 // Trash icon
-export function TrashIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconProps) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Polyline points="3,6 5,6 21,6" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
-      <Path
-        d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </Svg>
-  );
-}
-
 // Baby bottle icon — used for the Baby tracking nav button.
 // A rounded-rect bottle body with a nipple cap on top and two measurement marks.
 export function BabyIcon({ size = 24, color = '#000', strokeWidth = 2 }: IconProps) {

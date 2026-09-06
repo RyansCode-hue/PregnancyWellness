@@ -28,9 +28,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const loadSettings = async () => {
-    const s = await getSettings();
-    setSettings(s);
-    setLoaded(true);
+    try {
+      setSettings(await getSettings());
+    } catch (err) {
+      // A corrupt settings blob must not leave the app stuck on a blank screen.
+      // Defaults are used for this session; the next successful save overwrites it.
+      console.error('Failed to load app settings; falling back to defaults', err);
+      setSettings(DEFAULT_SETTINGS);
+    } finally {
+      setLoaded(true);
+    }
   };
 
   const toggleDarkMode = useCallback(async () => {

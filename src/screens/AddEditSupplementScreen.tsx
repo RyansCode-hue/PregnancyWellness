@@ -51,6 +51,18 @@ export default function AddEditSupplementScreen({ route, navigation }: Props) {
     setAllSupplements(sups.filter((s) => s.id !== existing?.id));
   };
 
+  // Links are only valid between supplements that share a frequency (a linked
+  // cluster is treated as one unit with one frequency everywhere else).
+  const linkableSupplements = allSupplements.filter((s) => s.frequency === frequency);
+
+  const handleSetFrequency = (next: Frequency) => {
+    setFrequency(next);
+    const linkableIds = new Set(
+      allSupplements.filter((s) => s.frequency === next).map((s) => s.id),
+    );
+    setLinkedIds((prev) => prev.filter((id) => linkableIds.has(id)));
+  };
+
   const toggleLink = (id: string) => {
     setLinkedIds((prev) =>
       prev.includes(id) ? prev.filter((lid) => lid !== id) : [...prev, id],
@@ -76,7 +88,6 @@ export default function AddEditSupplementScreen({ route, navigation }: Props) {
       dosesPerDay: doses,
       whenToTake: whenToTake.trim() || undefined,
       frequency,
-      dayOfWeek: undefined,
       linkedSupplementIds: linkedIds.length > 0 ? linkedIds : undefined,
       createdAt: existing?.createdAt || new Date().toISOString(),
     });
@@ -126,7 +137,7 @@ export default function AddEditSupplementScreen({ route, navigation }: Props) {
             <View style={s.freqRow}>
               <TouchableOpacity
                 style={[s.freqOption, frequency === 'daily' && s.freqSelected]}
-                onPress={() => setFrequency('daily')}
+                onPress={() => handleSetFrequency('daily')}
               >
                 <Text style={[s.freqText, frequency === 'daily' && s.freqTextSelected]}>
                   Daily
@@ -134,7 +145,7 @@ export default function AddEditSupplementScreen({ route, navigation }: Props) {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.freqOption, frequency === 'weekly' && s.freqSelected]}
-                onPress={() => setFrequency('weekly')}
+                onPress={() => handleSetFrequency('weekly')}
               >
                 <Text style={[s.freqText, frequency === 'weekly' && s.freqTextSelected]}>
                   Weekly
@@ -194,14 +205,15 @@ export default function AddEditSupplementScreen({ route, navigation }: Props) {
           <WhenToTakePicker value={whenToTake} onChange={setWhenToTake} />
 
           {/* Link Supplements */}
-          {allSupplements.length > 0 && (
+          {linkableSupplements.length > 0 && (
             <View style={s.fieldGroup}>
               <Text style={s.label}>Link Supplements</Text>
               <Text style={s.linkHint}>
-                Linked supplements share dose progress — checking one checks the others
+                Linked supplements share dose progress — checking one checks the others.
+                Only {frequency} supplements can be linked to a {frequency} one.
               </Text>
               <View style={s.linkChipsRow}>
-                {allSupplements.map((sup) => {
+                {linkableSupplements.map((sup) => {
                   const isLinked = linkedIds.includes(sup.id);
                   return (
                     <TouchableOpacity

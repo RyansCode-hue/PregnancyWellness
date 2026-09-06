@@ -388,7 +388,12 @@ function LaborCard({
             {item.externalUrl ? (
               <TouchableOpacity
                 style={s.actionButton}
-                onPress={() => Linking.openURL(item.externalUrl!).catch(() => {})}
+                onPress={() =>
+                  Linking.openURL(item.externalUrl!).catch((err) => {
+                    console.error('Failed to open external link', item.externalUrl, err);
+                    Alert.alert('Could not open link', 'No app on this device can open that link.');
+                  })
+                }
                 activeOpacity={0.75}
               >
                 <ExternalLinkIcon size={14} color={colors.primary} strokeWidth={2} />

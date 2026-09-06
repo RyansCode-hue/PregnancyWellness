@@ -43,10 +43,13 @@ function AppNavigator() {
   const initialTab: NavbarRoute = enabledTabs[0];
   const [routeName, setRouteName] = useState<keyof RootStackParamList>(initialTab);
 
-  // Reschedule whenever the reminders list reference changes (added/removed/edited).
+  // Reschedule whenever the reminders list reference changes (added/removed/edited)
+  // or the partner name changes, since it is substituted into reminder bodies.
   useEffect(() => {
-    scheduleReminders(settings);
-  }, [settings.remindersEnabled, settings.reminders]);
+    scheduleReminders(settings).catch((err) => {
+      console.error('Failed to schedule reminders', err);
+    });
+  }, [settings.remindersEnabled, settings.reminders, settings.partnerName]);
 
   // Track the current route so the hoisted AppHeader knows which tab is active
   // and whether to render at all (only on tab routes).

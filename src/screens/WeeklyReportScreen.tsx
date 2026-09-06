@@ -17,6 +17,7 @@ import {
   getWeeklyReport,
   parseDate,
   formatDate,
+  getWeekRange,
   WeeklyReport,
 } from '../storage/storage';
 import { BackIcon, PillIcon, DumbbellIcon, CheckIcon, XIcon } from '../components/Icons';
@@ -95,7 +96,6 @@ export default function WeeklyReportScreen({ navigation }: Props) {
   };
 
   // Derive available years from weeks
-  const availableYears: number[] = [];
   const yearSet = new Set<number>();
   for (const w of allWeeks) {
     const d = parseDate(w);
@@ -114,14 +114,11 @@ export default function WeeklyReportScreen({ navigation }: Props) {
     const monthSet = new Set<number>();
     const now = new Date();
     for (const w of allWeeks) {
-      if (weekOverlapsMonth(w, selectedYear, 0) || true) {
-        // Check all 12 months
-        for (let m = 0; m < 12; m++) {
-          if (weekOverlapsMonth(w, selectedYear, m)) {
-            // Don't include future months
-            if (selectedYear < now.getFullYear() || m <= now.getMonth()) {
-              monthSet.add(m);
-            }
+      for (let m = 0; m < 12; m++) {
+        if (weekOverlapsMonth(w, selectedYear, m)) {
+          // Don't include future months
+          if (selectedYear < now.getFullYear() || m <= now.getMonth()) {
+            monthSet.add(m);
           }
         }
       }
@@ -161,12 +158,7 @@ export default function WeeklyReportScreen({ navigation }: Props) {
   };
 
   // Check if selected week is the current week
-  const now = new Date();
-  const todayDay = now.getDay();
-  const mondayOffset = todayDay === 0 ? -6 : 1 - todayDay;
-  const currentMonday = new Date(now);
-  currentMonday.setDate(now.getDate() + mondayOffset);
-  const currentMondayStr = formatDate(currentMonday);
+  const currentMondayStr = getWeekRange(formatDate(new Date())).start;
   const isCurrentWeek = selectedWeek === currentMondayStr;
 
   // Overall scores

@@ -24,6 +24,23 @@ function newReminderId(): string {
   return `r_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
 }
 
+// Reminder bodies may contain this token; it is replaced with `partnerName` when the
+// notification is scheduled so the name can change without re-editing every reminder.
+export const REMINDER_NAME_PLACEHOLDER = '{name}';
+
+export function renderReminderBody(body: string, partnerName: string): string {
+  return body.split(REMINDER_NAME_PLACEHOLDER).join(partnerName.trim() || 'there');
+}
+
+// Bodies written by earlier builds hardcoded the default partner name. Map them onto
+// the placeholder so the name setting takes effect for existing installs.
+const LEGACY_REMINDER_BODIES: Record<string, string> = {
+  'Hey Amy, remember to take your supplements today!':
+    'Hey {name}, remember to take your supplements today!',
+  'Hey Amy, have you taken all your supplements today?':
+    'Hey {name}, have you taken all your supplements today?',
+};
+
 export async function getSettings(): Promise<AppSettings> {
   const json = await AsyncStorage.getItem(SETTINGS_KEY);
   if (!json) {
@@ -59,8 +76,12 @@ export async function getSettings(): Promise<AppSettings> {
       reminders = DEFAULT_SETTINGS.reminders.map((r) => ({ ...r }));
     }
   } else {
-    // Defensive: ensure every reminder has an id
-    reminders = reminders.map((r) => (r.id ? r : { ...r, id: newReminderId() }));
+    reminders = reminders.map((r) => ({
+      ...r,
+      // Defensive: ensure every reminder has an id
+      id: r.id || newReminderId(),
+      body: LEGACY_REMINDER_BODIES[r.body] ?? r.body,
+    }));
   }
 
   // Drop the legacy keys when returning, so they stop round-tripping through saveSettings.
@@ -114,7 +135,23 @@ export async function saveSupplement(supplement: Supplement): Promise<void> {
   const supplements = await getSupplements();
   const index = supplements.findIndex((s) => s.id === supplement.id);
   const oldLinked = index >= 0 ? (supplements[index].linkedSupplementIds || []) : [];
-  const newLinked = supplement.linkedSupplementIds || [];
+
+  // Linked supplements must share a frequency: the Weekly Report and list sections
+  // treat a cluster as a unit with one frequency, so a mixed cluster would be split.
+  const requestedLinks = supplement.linkedSupplementIds || [];
+  const newLinked = requestedLinks.filter((id) => {
+    const other = supplements.find((x) => x.id === id);
+    if (!other) return false;
+    if (other.frequency !== supplement.frequency) {
+      console.warn(
+        `saveSupplement: dropping link ${supplement.id} -> ${id}: frequency mismatch ` +
+          `(${supplement.frequency} vs ${other.frequency})`,
+      );
+      return false;
+    }
+    return true;
+  });
+  supplement = { ...supplement, linkedSupplementIds: newLinked };
 
   if (index >= 0) {
     // Preserve existing sortOrder on update unless caller explicitly set one
@@ -190,27 +227,35 @@ export async function deleteSupplement(id: string): Promise<void> {
   await AsyncStorage.setItem(SUPPLEMENTS_KEY, JSON.stringify(filtered));
 }
 
-// ─── Supplement filtering for a given date ───
+// ─── Week helpers (weeks are Monday-start) ───
 
-export function getSupplementsForDate(
-  supplements: Supplement[],
-  _dateStr: string,
-): Supplement[] {
-  // All supplements (daily + weekly) show every day.
-  // Weekly ones can be taken any day during the week.
-  return supplements;
+// Local-midnight Date for the Monday of the week containing `date`.
+export function getWeekStart(date: Date): Date {
+  const day = date.getDay(); // 0=Sun
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  monday.setDate(monday.getDate() + mondayOffset);
+  return monday;
 }
 
 // Get the Monday..Sunday range containing the given date
 export function getWeekRange(dateStr: string): { start: string; end: string } {
-  const date = parseDate(dateStr);
-  const day = date.getDay(); // 0=Sun
-  const mondayOffset = day === 0 ? -6 : 1 - day;
-  const monday = new Date(date);
-  monday.setDate(date.getDate() + mondayOffset);
+  const monday = getWeekStart(parseDate(dateStr));
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
   return { start: formatDate(monday), end: formatDate(sunday) };
+}
+
+// The 7 YYYY-MM-DD strings of the week containing `dateStr`, Monday first.
+export function getWeekDates(dateStr: string): string[] {
+  const monday = getWeekStart(parseDate(dateStr));
+  const dates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    dates.push(formatDate(d));
+  }
+  return dates;
 }
 
 // Check how many weekly supplement doses are completed this week
@@ -221,18 +266,14 @@ export async function getWeeklyProgress(
   const weeklySups = supplements.filter((s) => s.frequency === 'weekly');
   if (weeklySups.length === 0) return { completed: 0, total: 0 };
 
-  const { start } = getWeekRange(dateStr);
-  const startDate = parseDate(start);
+  const weekDates = getWeekDates(dateStr);
   let totalDoses = 0;
   let completedDoses = 0;
 
   for (const sup of weeklySups) {
     totalDoses += sup.dosesPerDay;
     let supCompleted = 0;
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(startDate);
-      d.setDate(startDate.getDate() + i);
-      const ds = formatDate(d);
+    for (const ds of weekDates) {
       const record = await getDayRecord(ds);
       const doses = record[sup.id];
       if (doses) {
@@ -330,32 +371,60 @@ export async function deleteWorkout(id: string): Promise<void> {
 
 // ─── Workout progress ───
 
-// Per-day progress. Day-assigned workouts contribute 1 to total each.
-// Weekly-goal workouts only contribute when completed today (bonus, not penalty).
+// Sessions logged for one workout on one day. Records written before the session
+// counter existed only carry `completed`; treat that as a single session.
+export function getWorkoutSessions(item: WorkoutDayRecord[string] | undefined): number {
+  if (!item) return 0;
+  return item.sessions ?? (item.completed ? 1 : 0);
+}
+
+// Sessions a single day needs before the workout counts as done for that day.
+// Weekly-goal workouts are done for the day after one session; the goal itself is
+// tracked across the week by `getWeeklyWorkoutCount`.
+export function getWorkoutDayTarget(workout: Workout): number {
+  return workout.frequency === 'days' ? Math.max(1, workout.timesPerDay ?? 1) : 1;
+}
+
+export function isWorkoutDoneOnDay(
+  workout: Workout,
+  item: WorkoutDayRecord[string] | undefined,
+): boolean {
+  return getWorkoutSessions(item) >= getWorkoutDayTarget(workout);
+}
+
+// Per-day progress from an already-loaded record. Day-assigned workouts contribute
+// their per-day target to the total (partial sessions count toward completion).
+// Weekly-goal workouts only contribute when logged today (bonus, not penalty).
+export function computeWorkoutProgress(
+  todayWorkouts: Workout[],
+  record: WorkoutDayRecord,
+): { completed: number; total: number } {
+  let completed = 0;
+  let total = 0;
+  for (const w of todayWorkouts) {
+    const sessions = getWorkoutSessions(record[w.id]);
+    if (w.frequency === 'weekly') {
+      if (sessions > 0) {
+        completed++;
+        total++;
+      }
+    } else {
+      const target = getWorkoutDayTarget(w);
+      total += target;
+      completed += Math.min(sessions, target);
+    }
+  }
+  return { completed, total };
+}
+
 export async function getWorkoutProgress(
   workouts: Workout[],
   dateStr: string,
 ): Promise<{ completed: number; total: number }> {
   const todayWorkouts = getWorkoutsForDate(workouts, dateStr);
   if (todayWorkouts.length === 0) return { completed: 0, total: 0 };
-
   const record = await getWorkoutDayRecord(dateStr);
-  let completed = 0;
-  let total = 0;
-  for (const w of todayWorkouts) {
-    const isGoal = w.frequency === 'weekly';
-    const done = !!record[w.id]?.completed;
-    if (isGoal) {
-      if (done) {
-        completed++;
-        total++;
-      }
-    } else {
-      total++;
-      if (done) completed++;
-    }
-  }
-  return { completed, total };
+  return computeWorkoutProgress(todayWorkouts, record);
 }
 
 // ─── Workout filtering for a given date ───
@@ -392,13 +461,13 @@ export async function getLastCompletedWorkoutDates(
     let record: WorkoutDayRecord;
     try {
       record = JSON.parse(val) as WorkoutDayRecord;
-    } catch {
+    } catch (err) {
+      console.error(`Corrupt workout record at ${key}; skipping`, err);
       continue;
     }
     for (const wid of Object.keys(record)) {
       if (!idSet.has(wid)) continue;
-      const item = record[wid];
-      const done = (item.sessions ?? 0) > 0 || item.completed;
+      const done = getWorkoutSessions(record[wid]) > 0;
       if (done && (!result[wid] || date > result[wid])) {
         result[wid] = date;
       }
@@ -408,26 +477,31 @@ export async function getLastCompletedWorkoutDates(
 }
 
 // Sum sessions across the week (Mon-Sun containing dateStr) for a weekly-goal
-// workout. Sessions can stack on the same day. Legacy records that only have
-// `completed: true` (from before the counter model) count as 1 session.
+// workout. Sessions can stack on the same day.
 export async function getWeeklyWorkoutCount(
   workoutId: string,
   dateStr: string,
 ): Promise<number> {
-  const { start } = getWeekRange(dateStr);
-  const startDate = parseDate(start);
   let count = 0;
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(startDate);
-    d.setDate(startDate.getDate() + i);
-    const ds = formatDate(d);
+  for (const ds of getWeekDates(dateStr)) {
     const record = await getWorkoutDayRecord(ds);
-    const item = record[workoutId];
-    if (item) {
-      count += item.sessions ?? (item.completed ? 1 : 0);
-    }
+    count += getWorkoutSessions(record[workoutId]);
   }
   return count;
+}
+
+// Week session counts keyed by workout id, for the weekly-goal workouts in `workouts`.
+export async function getWeeklyWorkoutCounts(
+  workouts: Workout[],
+  dateStr: string,
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const w of workouts) {
+    if (w.frequency === 'weekly') {
+      counts[w.id] = await getWeeklyWorkoutCount(w.id, dateStr);
+    }
+  }
+  return counts;
 }
 
 // ─── Workout Day Records ───
@@ -448,55 +522,35 @@ export async function saveWorkoutDayRecord(
   await AsyncStorage.setItem(workoutDayKey(date), JSON.stringify(record));
 }
 
-export async function toggleWorkout(
+async function setWorkoutSessions(
   date: string,
   workoutId: string,
+  sessions: number,
 ): Promise<WorkoutDayRecord> {
   const record = await getWorkoutDayRecord(date);
-  if (!record[workoutId]) {
-    record[workoutId] = { completed: true };
-  } else {
-    record[workoutId] = {
-      ...record[workoutId],
-      completed: !record[workoutId].completed,
-    };
-  }
+  const current = record[workoutId] ?? { completed: false };
+  const next = Math.max(0, sessions);
+  record[workoutId] = { ...current, sessions: next, completed: next > 0 };
   await saveWorkoutDayRecord(date, record);
   return record;
 }
 
-// Add one session to today's count for a weekly-goal workout.
+// Add one session to the day's count.
 export async function incrementWorkoutSessions(
   date: string,
   workoutId: string,
 ): Promise<WorkoutDayRecord> {
   const record = await getWorkoutDayRecord(date);
-  const current = record[workoutId] ?? { completed: false };
-  const baseSessions = current.sessions ?? (current.completed ? 1 : 0);
-  record[workoutId] = {
-    ...current,
-    completed: current.completed,
-    sessions: baseSessions + 1,
-  };
-  await saveWorkoutDayRecord(date, record);
-  return record;
+  return setWorkoutSessions(date, workoutId, getWorkoutSessions(record[workoutId]) + 1);
 }
 
-// Remove one session from today's count for a weekly-goal workout (floor at 0).
+// Remove one session from the day's count (floor at 0).
 export async function decrementWorkoutSessions(
   date: string,
   workoutId: string,
 ): Promise<WorkoutDayRecord> {
   const record = await getWorkoutDayRecord(date);
-  const current = record[workoutId] ?? { completed: false };
-  const baseSessions = current.sessions ?? (current.completed ? 1 : 0);
-  record[workoutId] = {
-    ...current,
-    completed: current.completed,
-    sessions: Math.max(0, baseSessions - 1),
-  };
-  await saveWorkoutDayRecord(date, record);
-  return record;
+  return setWorkoutSessions(date, workoutId, getWorkoutSessions(record[workoutId]) - 1);
 }
 
 export async function saveWorkoutNotes(
@@ -641,7 +695,7 @@ export async function getDayCombinedStatus(
   if (dayAssigned.length > 0) {
     let allComplete = true;
     for (const workout of dayAssigned) {
-      if (!workoutRecord[workout.id]?.completed) {
+      if (!isWorkoutDoneOnDay(workout, workoutRecord[workout.id])) {
         allComplete = false;
         break;
       }
@@ -650,7 +704,10 @@ export async function getDayCombinedStatus(
   }
 
   // If no day-assigned workouts but a weekly-goal workout was done today, mark green.
-  if (workoutStatus === 'none' && goalWorkouts.some((w) => workoutRecord[w.id]?.completed)) {
+  if (
+    workoutStatus === 'none' &&
+    goalWorkouts.some((w) => isWorkoutDoneOnDay(w, workoutRecord[w.id]))
+  ) {
     workoutStatus = 'complete';
   }
 
@@ -681,14 +738,18 @@ export async function getMonthStatuses(
 
 // ─── Pregnancy week helpers ───
 
+// Whole calendar days from `from` to `to`, ignoring time of day. Computed on UTC
+// day numbers so a DST transition inside the range cannot skew the result.
+export function daysBetween(from: Date, to: Date): number {
+  const a = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+  const b = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate());
+  return Math.round((b - a) / 86400000);
+}
+
 export function getPregnancyWeek(dueDate: string): { week: number; day: number } | null {
   if (!dueDate) return null;
-  const due = parseDate(dueDate);
-  const now = new Date();
-
-  const lmpMs = due.getTime() - 280 * 24 * 60 * 60 * 1000;
-  const elapsed = now.getTime() - lmpMs;
-  const totalDays = Math.floor(elapsed / (24 * 60 * 60 * 1000));
+  // Gestational age counts from the LMP, 280 days before the due date.
+  const totalDays = 280 - daysBetween(new Date(), parseDate(dueDate));
 
   if (totalDays < 0 || totalDays > 300) return null;
 
@@ -699,11 +760,7 @@ export function getPregnancyWeek(dueDate: string): { week: number; day: number }
 
 export function getDaysUntilDue(dueDate: string): number | null {
   if (!dueDate) return null;
-  const due = parseDate(dueDate);
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const diff = due.getTime() - now.getTime();
-  return Math.ceil(diff / (24 * 60 * 60 * 1000));
+  return daysBetween(new Date(), parseDate(dueDate));
 }
 
 // ─── Weekly supplement dose aggregation ───
@@ -717,8 +774,6 @@ export async function getWeeklySupplementDoses(
   const weeklySups = supplements.filter((s) => s.frequency === 'weekly');
   if (weeklySups.length === 0) return {};
 
-  const { start } = getWeekRange(dateStr);
-  const startDate = parseDate(start);
   const merged: DayRecord = {};
 
   // Initialize merged record with false arrays
@@ -727,10 +782,7 @@ export async function getWeeklySupplementDoses(
   }
 
   // Scan all 7 days and merge checked doses
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(startDate);
-    d.setDate(startDate.getDate() + i);
-    const ds = formatDate(d);
+  for (const ds of getWeekDates(dateStr)) {
     const record = await getDayRecord(ds);
 
     for (const sup of weeklySups) {
@@ -746,6 +798,18 @@ export async function getWeeklySupplementDoses(
   }
 
   return merged;
+}
+
+// The record a day screen should display: the day's own doses for daily supplements,
+// with weekly supplements replaced by their week-merged doses. Never write this back
+// to storage — it contains checks that belong to other days of the week.
+export async function getDisplayDayRecord(
+  dateStr: string,
+  supplements: Supplement[],
+): Promise<DayRecord> {
+  const record = await getDayRecord(dateStr);
+  const weeklyDoses = await getWeeklySupplementDoses(dateStr, supplements);
+  return { ...record, ...weeklyDoses };
 }
 
 // ─── Install date tracking ───
@@ -814,36 +878,8 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
     });
   }
 
-  // Build linked clusters using connected components (same algorithm as groupLinkedSupplements)
-  const visited = new Set<string>();
-  const clusters: Supplement[][] = [];
-  const supById = new Map<string, Supplement>();
-  for (const s of supplements) supById.set(s.id, s);
-
-  for (const sup of supplements) {
-    if (visited.has(sup.id)) continue;
-    const cluster: Supplement[] = [];
-    const queue = [sup.id];
-    visited.add(sup.id);
-    while (queue.length > 0) {
-      const id = queue.shift()!;
-      const current = supById.get(id);
-      if (current) {
-        cluster.push(current);
-        for (const linkedId of current.linkedSupplementIds || []) {
-          if (!visited.has(linkedId) && supById.has(linkedId)) {
-            visited.add(linkedId);
-            queue.push(linkedId);
-          }
-        }
-      }
-    }
-    clusters.push(cluster);
-  }
-
-  // Process each cluster
-  for (const cluster of clusters) {
-    // All supplements in a cluster share the same frequency
+  // Process each linked cluster. saveSupplement guarantees a cluster shares one frequency.
+  for (const cluster of buildSupplementClusters(supplements)) {
     const frequency = cluster[0].frequency;
     const isDaily = frequency === 'daily';
 
@@ -952,23 +988,16 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
   }
 
   // Workouts:
-  //  - 'days' workouts: count how many assigned days were completed
-  //  - 'weekly' goal workouts: count completed days across the whole week, capped at goal
+  //  - 'days' workouts: count how many assigned days reached their per-day target
+  //  - 'weekly' goal workouts: sessions logged across the whole week, capped at goal
   const workoutItems: WeeklyReportWorkoutItem[] = [];
   for (const workout of workouts) {
     if (workout.frequency === 'weekly') {
       const goal = workout.weeklyGoal ?? 1;
-      let completedDays = 0;
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
-        const ds = formatDate(d);
-        const record = await getWorkoutDayRecord(ds);
-        if (record[workout.id]?.completed) completedDays++;
-      }
+      const sessions = await getWeeklyWorkoutCount(workout.id, weekStartDate);
       workoutItems.push({
         name: workout.name,
-        completedDays: Math.min(completedDays, goal),
+        completedDays: Math.min(sessions, goal),
         totalDays: goal,
         frequency: 'weekly',
       });
@@ -983,7 +1012,7 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
           totalDays++;
           const ds = formatDate(d);
           const record = await getWorkoutDayRecord(ds);
-          if (record[workout.id]?.completed) {
+          if (isWorkoutDoneOnDay(workout, record[workout.id])) {
             completedDays++;
           }
         }
@@ -1005,20 +1034,8 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
 // Get all available week start dates from install date to current week
 export async function getAvailableWeeks(): Promise<string[]> {
   const installDate = await getInstallDate();
-  const install = parseDate(installDate);
-  const today = new Date();
-
-  // Find the Monday of install week
-  const installDay = install.getDay();
-  const installMondayOffset = installDay === 0 ? -6 : 1 - installDay;
-  const firstMonday = new Date(install);
-  firstMonday.setDate(install.getDate() + installMondayOffset);
-
-  // Find Monday of current week
-  const todayDay = today.getDay();
-  const todayMondayOffset = todayDay === 0 ? -6 : 1 - todayDay;
-  const currentMonday = new Date(today);
-  currentMonday.setDate(today.getDate() + todayMondayOffset);
+  const firstMonday = getWeekStart(parseDate(installDate));
+  const currentMonday = getWeekStart(new Date());
 
   const weeks: string[] = [];
   const cursor = new Date(firstMonday);
@@ -1049,53 +1066,13 @@ export const DAY_NAMES_FULL = [
   'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
 ];
 
-// ─── Linked supplement grouping ───
-// Groups linked supplements so they appear adjacent in lists.
-// Uses connected-component discovery: if A links B and B links C, all three are grouped together.
-export function groupLinkedSupplements(supplements: Supplement[]): Supplement[] {
-  if (supplements.length <= 1) return supplements;
+// ─── Linked supplement clustering ───
 
-  const visited = new Set<string>();
-  const result: Supplement[] = [];
-  const idToSup = new Map<string, Supplement>();
-  for (const sup of supplements) {
-    idToSup.set(sup.id, sup);
-  }
-
-  for (const sup of supplements) {
-    if (visited.has(sup.id)) continue;
-
-    // BFS to find the full connected component
-    const cluster: Supplement[] = [];
-    const queue: string[] = [sup.id];
-    visited.add(sup.id);
-
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
-      const current = idToSup.get(currentId);
-      if (current) {
-        cluster.push(current);
-        for (const linkedId of current.linkedSupplementIds || []) {
-          if (!visited.has(linkedId) && idToSup.has(linkedId)) {
-            visited.add(linkedId);
-            queue.push(linkedId);
-          }
-        }
-      }
-    }
-
-    result.push(...cluster);
-  }
-
-  return result;
-}
-
-// ─── Reorder helpers (arrow-button replacement for drag-and-drop) ───
-
-// Build connected-component clusters from a section's supplements, using the same
-// BFS algorithm as `groupLinkedSupplements`. Each returned cluster is an array of
-// supplements that all reference each other directly or transitively.
-function buildSupplementClusters(sectionSupplements: Supplement[]): Supplement[][] {
+// Build connected-component clusters (BFS): if A links B and B links C, {A,B,C} is one
+// cluster. Links to ids outside `sectionSupplements` are ignored, so passing a
+// frequency section yields clusters for that section only. This is the single
+// implementation used for list ordering, arrow reordering and the Weekly Report.
+export function buildSupplementClusters(sectionSupplements: Supplement[]): Supplement[][] {
   const idToSup = new Map<string, Supplement>();
   for (const s of sectionSupplements) idToSup.set(s.id, s);
   const visited = new Set<string>();
@@ -1121,6 +1098,14 @@ function buildSupplementClusters(sectionSupplements: Supplement[]): Supplement[]
   }
   return clusters;
 }
+
+// Groups linked supplements so they appear adjacent in lists.
+export function groupLinkedSupplements(supplements: Supplement[]): Supplement[] {
+  if (supplements.length <= 1) return supplements;
+  return buildSupplementClusters(supplements).flat();
+}
+
+// ─── Reorder helpers (arrow-button replacement for drag-and-drop) ───
 
 // Move the cluster containing `targetId` up or down by one cluster position
 // within its section. Linked supplements travel as a unit. Returns the unchanged
@@ -1244,13 +1229,13 @@ export async function clearContractions(): Promise<void> {
   await AsyncStorage.removeItem(CONTRACTIONS_KEY);
 }
 
-// Estimate which labor stage you're in based on the last 5 completed
+// Estimate which labor stage you're in based on the last 4 completed
 // contractions. Classification is by inter-start interval (minutes):
 //   < 3 min  → transition
 //   3–5 min  → active
 //   ≥ 5 min  → early
 // (Pushing isn't a timer stage — by then you've stopped tracking.)
-// Returns null when there isn't enough data (need ≥ 2 completed contractions).
+// Returns null when there isn't enough data (need ≥ 4 completed contractions).
 export interface StageEstimate {
   stage: LaborStage | null;
   avgDurationSec: number;

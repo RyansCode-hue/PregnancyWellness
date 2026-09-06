@@ -9,7 +9,13 @@ import {
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Workout, WorkoutDayRecord } from '../types';
-import { DAY_NAMES_SHORT, parseDate, formatDate } from '../storage/storage';
+import {
+  DAY_NAMES_SHORT,
+  parseDate,
+  formatDate,
+  getWorkoutSessions,
+  getWorkoutDayTarget,
+} from '../storage/storage';
 import { CheckIcon, NotesIcon, ChevronUpIcon } from './Icons';
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -30,7 +36,6 @@ function formatLastDone(dateStr: string): string {
 interface WorkoutCardProps {
   workout: Workout;
   record: WorkoutDayRecord[string] | undefined;
-  onToggle: () => void;
   onSaveNotes: (notes: string) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -38,10 +43,10 @@ interface WorkoutCardProps {
   colors: ThemeColors;
   /** For 'weekly' frequency: total sessions logged this week (Mon-Sun). */
   weekCount?: number;
-  /** For 'weekly' frequency: tapping an empty circle bumps today's count. */
-  onIncrementSession?: () => void;
-  /** For 'weekly' frequency: tapping a filled circle removes one from today. */
-  onDecrementSession?: () => void;
+  /** Log one more session for this day (empty circle / unchecked box tapped). */
+  onIncrementSession: () => void;
+  /** Remove one of this day's sessions (filled circle / checked box tapped). */
+  onDecrementSession: () => void;
   /** For 'weekly' frequency: most recent date this workout was logged (YYYY-MM-DD). */
   lastCompletedDate?: string;
   // Reorder buttons. If both callbacks are omitted the column is not rendered.
@@ -54,7 +59,6 @@ interface WorkoutCardProps {
 export default function WorkoutCard({
   workout,
   record,
-  onToggle,
   onSaveNotes,
   onEdit,
   onDelete,
@@ -70,22 +74,29 @@ export default function WorkoutCard({
   canMoveDown,
 }: WorkoutCardProps) {
   const s = makeStyles(colors);
-  const completed = record?.completed || false;
+  const todaySessions = getWorkoutSessions(record);
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState(record?.notes || '');
   const swipeableRef = useRef<Swipeable>(null);
 
   const isGoal = workout.frequency === 'weekly';
-  const goal = workout.weeklyGoal ?? 1;
-  const filledCount = Math.min(weekCount ?? 0, goal);
-  const goalMet = isGoal && (weekCount ?? 0) >= goal;
+  const dayTarget = getWorkoutDayTarget(workout);
+  // Weekly-goal circles show the whole week's sessions; day workouts show today's.
+  const circleCount = isGoal ? workout.weeklyGoal ?? 1 : dayTarget;
+  const filledCount = Math.min(isGoal ? weekCount ?? 0 : todaySessions, circleCount);
+  const goalMet = isGoal && (weekCount ?? 0) >= circleCount;
   // For goal workouts, the card is "complete" only when the whole weekly goal is met,
-  // not when a single day has been logged. For day workouts, today's completion is enough.
-  const isCardComplete = isGoal ? goalMet : completed;
+  // not when a single day has been logged. Day workouts need today's target reached.
+  const isCardComplete = isGoal ? goalMet : todaySessions >= dayTarget;
+  // A single-session day workout uses one big checkbox; anything else uses circles.
+  const showCircles = isGoal || dayTarget > 1;
 
+  const assignedLabel = workout.assignedDays.map((d) => DAY_NAMES_SHORT[d]).join(', ');
   const daysLabel = isGoal
-    ? `${weekCount ?? 0} of ${goal} this week`
-    : workout.assignedDays.map((d) => DAY_NAMES_SHORT[d]).join(', ');
+    ? `${weekCount ?? 0} of ${circleCount} this week`
+    : dayTarget > 1
+      ? `${assignedLabel} · ${Math.min(todaySessions, dayTarget)} of ${dayTarget} today`
+      : assignedLabel;
 
   const handleToggleNotes = () => {
     if (showNotes && notes !== (record?.notes || '')) {
@@ -94,16 +105,22 @@ export default function WorkoutCard({
     setShowNotes(!showNotes);
   };
 
-  // Tap an empty circle to log a new session today. Tap a filled circle to
-  // remove one session from today (floor at 0). Lets you stack multiple
-  // sessions on the same day or spread them across the week.
-  const handleGoalBoxPress = (boxIndex: number) => {
+  // Tap an empty circle to log a new session today. Tap a filled circle to remove
+  // one session from today. For weekly goals the filled circles may belong to other
+  // days of the week; those cannot be removed from here, so the tap is ignored.
+  const handleCirclePress = (boxIndex: number) => {
     if (disabled) return;
     if (boxIndex < filledCount) {
-      onDecrementSession?.();
+      if (todaySessions > 0) onDecrementSession();
     } else {
-      onIncrementSession?.();
+      onIncrementSession();
     }
+  };
+
+  const handleCheckboxPress = () => {
+    if (disabled) return;
+    if (todaySessions > 0) onDecrementSession();
+    else onIncrementSession();
   };
 
   const closeSwipeable = () => swipeableRef.current?.close();
@@ -143,15 +160,15 @@ export default function WorkoutCard({
       <View style={[s.card, isCardComplete && s.cardComplete]}>
       <View style={s.cardBody}>
       <View style={s.topRow}>
-        {/* Checkbox — single big one for day-assigned workouts only */}
-        {!isGoal && (
+        {/* Checkbox — single big one for once-a-day workouts */}
+        {!showCircles && (
           <TouchableOpacity
-            style={[s.checkbox, completed && s.checkboxChecked]}
-            onPress={() => !disabled && onToggle()}
+            style={[s.checkbox, isCardComplete && s.checkboxChecked]}
+            onPress={handleCheckboxPress}
             activeOpacity={0.6}
             disabled={disabled}
           >
-            {completed && <CheckIcon size={22} color="#FFFFFF" strokeWidth={3} />}
+            {isCardComplete && <CheckIcon size={22} color="#FFFFFF" strokeWidth={3} />}
           </TouchableOpacity>
         )}
 
@@ -180,16 +197,16 @@ export default function WorkoutCard({
         )}
       </View>
 
-      {/* Per-session checkboxes for weekly-goal workouts */}
-      {isGoal && (
+      {/* Per-session circles: the week's sessions for goals, today's for multi-session days */}
+      {showCircles && (
         <View style={s.goalCheckboxRow}>
-          {Array.from({ length: goal }).map((_, i) => {
+          {Array.from({ length: circleCount }).map((_, i) => {
             const isFilled = i < filledCount;
             return (
               <TouchableOpacity
                 key={i}
                 style={[s.goalCheckbox, isFilled && s.checkboxChecked]}
-                onPress={() => handleGoalBoxPress(i)}
+                onPress={() => handleCirclePress(i)}
                 activeOpacity={0.6}
                 disabled={disabled}
               >
@@ -346,10 +363,6 @@ function makeStyles(colors: ThemeColors) {
       justifyContent: 'center',
       backgroundColor: colors.background,
     },
-    goalCheckboxToday: {
-      borderColor: colors.success,
-      borderWidth: 3,
-    },
     swipeActions: {
       flexDirection: 'row',
       marginBottom: spacing.sm,
@@ -371,10 +384,6 @@ function makeStyles(colors: ThemeColors) {
       color: '#FFFFFF',
       fontSize: fontSize.md,
       fontWeight: '700',
-    },
-    checkmarkIcon: {
-      alignItems: 'center',
-      justifyContent: 'center',
     },
     info: {
       flex: 1,

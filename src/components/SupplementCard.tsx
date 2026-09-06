@@ -8,7 +8,6 @@ import {
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Supplement } from '../types';
-import { DAY_NAMES_SHORT } from '../storage/storage';
 import { CheckIcon } from './Icons';
 
 interface SupplementCardProps {
@@ -50,11 +49,6 @@ export default function SupplementCard({
   const completedCount = doses.filter(Boolean).length;
   const allDone = completedCount === supplement.dosesPerDay;
   const swipeableRef = useRef<Swipeable>(null);
-
-  const frequencyLabel =
-    supplement.frequency === 'weekly' && supplement.dayOfWeek !== undefined
-      ? `Weekly · Every ${DAY_NAMES_SHORT[supplement.dayOfWeek]}`
-      : null;
 
   const hasLinks = linkedNames && linkedNames.length > 0;
 
@@ -110,9 +104,6 @@ export default function SupplementCard({
             <Text style={[s.name, allDone && s.nameComplete]}>
               {supplement.name}
             </Text>
-            {frequencyLabel && (
-              <Text style={s.freqText}>{frequencyLabel}</Text>
-            )}
             {hasLinks && (
               <Text style={s.linkedText}>
                 Linked with {linkedNames!.join(', ')}
@@ -255,12 +246,6 @@ function makeStyles(colors: ThemeColors) {
     },
     nameComplete: {
       color: colors.success,
-    },
-    freqText: {
-      fontSize: fontSize.sm,
-      color: colors.primary,
-      fontWeight: '500',
-      marginTop: 2,
     },
     linkedText: {
       fontSize: fontSize.sm,

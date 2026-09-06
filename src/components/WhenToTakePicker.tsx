@@ -7,7 +7,8 @@ import {
   StyleSheet,
   ScrollView,
 } from 'react-native';
-import { colors, spacing, fontSize, borderRadius } from '../theme';
+import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
+import { useTheme } from '../ThemeContext';
 
 const PRESETS = [
   'Morning',
@@ -28,6 +29,8 @@ interface WhenToTakePickerProps {
 }
 
 export default function WhenToTakePicker({ value, onChange }: WhenToTakePickerProps) {
+  const { colors } = useTheme();
+  const styles = makeStyles(colors);
   const [showCustom, setShowCustom] = useState(
     value !== '' && !PRESETS.includes(value)
   );
@@ -111,7 +114,8 @@ export default function WhenToTakePicker({ value, onChange }: WhenToTakePickerPr
   );
 }
 
-const styles = StyleSheet.create({
+function makeStyles(colors: ThemeColors) {
+  return StyleSheet.create({
   container: {
     marginBottom: spacing.md,
   },
@@ -161,3 +165,4 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
 });
+}

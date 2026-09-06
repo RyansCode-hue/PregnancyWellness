@@ -26,29 +26,37 @@ import {
   getWeeklyProgress,
   getWorkoutsForDate,
   getWorkoutDayRecord,
-  getDayRecord,
   toggleDose,
-  toggleWorkout,
   incrementWorkoutSessions,
   decrementWorkoutSessions,
   saveWorkoutNotes,
   deleteSupplement,
   deleteWorkout,
-  getWeeklyWorkoutCount,
+  getWeeklyWorkoutCounts,
   getLastCompletedWorkoutDates,
   formatDate,
-  getWeeklySupplementDoses,
+  getDisplayDayRecord,
   getWorkoutProgress,
   getDoseSourceRecord,
   groupLinkedSupplements,
   saveSupplementOrder,
   saveWorkoutOrder,
-  moveSupplementClusterInSection,
   getSupplementClusterEdges,
-  moveWorkoutInList,
   DayCombinedStatus,
 } from '../storage/storage';
+import {
+  getDosesFor,
+  buildSupplementNameMap,
+  getLinkedNames,
+  reorderSupplementSections,
+  reorderTodayWorkouts,
+} from '../dayHelpers';
 import { RootStackParamList, Supplement, Workout, DayRecord, DoseSourceRecord, WorkoutDayRecord } from '../types';
+
+function reportError(context: string, err: unknown) {
+  console.error(context, err);
+  Alert.alert('Something went wrong', `${context}. Please try again.`);
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Calendar'>;
 
@@ -82,7 +90,10 @@ export default function CalendarScreen({ navigation }: Props) {
     }, [year, month])
   );
 
-  const loadData = async () => {
+  const loadData = () =>
+    loadDataInner().catch((err) => reportError('Could not load the calendar', err));
+
+  const loadDataInner = async () => {
     const sups = await getSupplements();
     setSupplements(sups);
     const wks = await getWorkouts();
@@ -98,30 +109,16 @@ export default function CalendarScreen({ navigation }: Props) {
     const wkp = await getWorkoutProgress(wks, todayStr);
     setWorkoutProgress(wkp);
 
-    // Today's records for inline view — merge weekly supplement doses across the week
-    const todayRecord = await getDayRecord(todayStr);
-    const weeklyDoses = await getWeeklySupplementDoses(todayStr, sups);
-    const mergedRecord: DayRecord = { ...todayRecord };
-    for (const supId of Object.keys(weeklyDoses)) {
-      mergedRecord[supId] = weeklyDoses[supId];
-    }
-    setDayRecord(mergedRecord);
+    // Today's records for inline view (weekly supplement doses merged across the week)
+    setDayRecord(await getDisplayDayRecord(todayStr, sups));
     setDoseSourceRecord(await getDoseSourceRecord(todayStr));
     const tw = getWorkoutsForDate(wks, todayStr);
     setTodayWorkouts(tw);
     setWorkoutRecord(await getWorkoutDayRecord(todayStr));
 
-    // Weekly session counts for goal-frequency workouts shown today.
-    const counts: Record<string, number> = {};
-    const weeklyIds: string[] = [];
-    for (const w of tw) {
-      if (w.frequency === 'weekly') {
-        counts[w.id] = await getWeeklyWorkoutCount(w.id, todayStr);
-        weeklyIds.push(w.id);
-      }
-    }
+    const counts = await getWeeklyWorkoutCounts(tw, todayStr);
     setWeeklyWorkoutCounts(counts);
-    setLastCompletedDates(await getLastCompletedWorkoutDates(weeklyIds));
+    setLastCompletedDates(await getLastCompletedWorkoutDates(Object.keys(counts)));
   };
 
   const handlePrevMonth = () => {
@@ -138,34 +135,39 @@ export default function CalendarScreen({ navigation }: Props) {
     navigation.navigate('DayDetail', { date });
   };
 
-  const handleToggleDose = async (supId: string, doseIndex: number, dosesPerDay: number) => {
-    const updated = await toggleDose(todayStr, supId, doseIndex, dosesPerDay);
-    setDayRecord(updated);
+  // Each write is followed by a full reload so the month grid, progress bars and
+  // week counts all reflect the stored state.
+  const persistThenReload = async (context: string, write: () => Promise<unknown>) => {
+    try {
+      await write();
+    } catch (err) {
+      reportError(context, err);
+    }
     loadData();
   };
 
-  const handleToggleWorkout = async (workoutId: string) => {
-    const updated = await toggleWorkout(todayStr, workoutId);
-    setWorkoutRecord(updated);
-    loadData();
-  };
+  const handleToggleDose = (supId: string, doseIndex: number, dosesPerDay: number) =>
+    persistThenReload('Could not save that dose', async () => {
+      setDayRecord(await toggleDose(todayStr, supId, doseIndex, dosesPerDay));
+    });
 
   const handleSaveWorkoutNotes = async (workoutId: string, notes: string) => {
-    const updated = await saveWorkoutNotes(todayStr, workoutId, notes);
-    setWorkoutRecord(updated);
+    try {
+      setWorkoutRecord(await saveWorkoutNotes(todayStr, workoutId, notes));
+    } catch (err) {
+      reportError('Could not save notes', err);
+    }
   };
 
-  const handleIncrementSession = async (workoutId: string) => {
-    const updated = await incrementWorkoutSessions(todayStr, workoutId);
-    setWorkoutRecord(updated);
-    loadData();
-  };
+  const handleIncrementSession = (workoutId: string) =>
+    persistThenReload('Could not save that workout', async () => {
+      setWorkoutRecord(await incrementWorkoutSessions(todayStr, workoutId));
+    });
 
-  const handleDecrementSession = async (workoutId: string) => {
-    const updated = await decrementWorkoutSessions(todayStr, workoutId);
-    setWorkoutRecord(updated);
-    loadData();
-  };
+  const handleDecrementSession = (workoutId: string) =>
+    persistThenReload('Could not save that workout', async () => {
+      setWorkoutRecord(await decrementWorkoutSessions(todayStr, workoutId));
+    });
 
   const confirmDeleteSupplement = (sup: Supplement) => {
     Alert.alert(
@@ -212,55 +214,32 @@ export default function CalendarScreen({ navigation }: Props) {
   const dailySups = groupLinkedSupplements(supplements.filter((sup) => sup.frequency === 'daily'));
 
   // ─── Arrow-button reorder ───
-  // Moves the cluster containing `supId` up or down within its frequency section,
-  // then writes the merged full ordering to AsyncStorage. Linked supplements move
-  // together because `moveSupplementClusterInSection` operates on clusters.
-  const handleMoveSupplement = async (
+  // Linked supplements move together as a cluster; the merged full ordering is
+  // persisted so DayDetailScreen shows the same order.
+  const handleMoveSupplement = (
     supId: string,
     frequency: 'daily' | 'weekly',
     direction: 'up' | 'down',
   ) => {
-    const section = frequency === 'daily' ? dailySups : weeklySups;
-    const reordered = moveSupplementClusterInSection(section, supId, direction);
-    if (reordered === section) return; // already at edge
-    const otherSection = frequency === 'daily' ? weeklySups : dailySups;
-    // Display order = weekly first, then daily — match it in persistence.
-    const newAll =
-      frequency === 'daily'
-        ? [...otherSection, ...reordered]
-        : [...reordered, ...otherSection];
+    const newAll = reorderSupplementSections(dailySups, weeklySups, supId, frequency, direction);
+    if (!newAll) return;
     setSupplements(newAll);
-    await saveSupplementOrder(newAll.map((sp) => sp.id));
-    loadData();
+    return persistThenReload('Could not save the new order', () =>
+      saveSupplementOrder(newAll.map((sp) => sp.id)),
+    );
   };
 
-  const handleMoveWorkout = async (workoutId: string, direction: 'up' | 'down') => {
-    const reordered = moveWorkoutInList(todayWorkouts, workoutId, direction);
-    if (reordered === todayWorkouts) return;
-    setTodayWorkouts(reordered);
-    const todayIds = reordered.map((w) => w.id);
-    const todaySet = new Set(todayIds);
-    const others = workoutsList.filter((w) => !todaySet.has(w.id)).map((w) => w.id);
-    await saveWorkoutOrder([...todayIds, ...others]);
-    loadData();
+  const handleMoveWorkout = (workoutId: string, direction: 'up' | 'down') => {
+    const result = reorderTodayWorkouts(todayWorkouts, workoutsList, workoutId, direction);
+    if (!result) return;
+    setTodayWorkouts(result.todayWorkouts);
+    return persistThenReload('Could not save the new order', () =>
+      saveWorkoutOrder(result.orderedIds),
+    );
   };
 
-  const getDoses = (sup: Supplement): boolean[] => {
-    return dayRecord[sup.id] || new Array(sup.dosesPerDay).fill(false);
-  };
-
-  // Build supplement name map for dose source labels
-  const supplementNameMap: Record<string, string> = {};
-  for (const sup of supplements) {
-    supplementNameMap[sup.id] = sup.name;
-  }
-
-  const getLinkedNames = (sup: Supplement): string[] => {
-    if (!sup.linkedSupplementIds || sup.linkedSupplementIds.length === 0) return [];
-    return sup.linkedSupplementIds
-      .map((id) => supplementNameMap[id])
-      .filter(Boolean);
-  };
+  const getDoses = (sup: Supplement) => getDosesFor(dayRecord, sup);
+  const supplementNameMap = buildSupplementNameMap(supplements);
 
   const hasAnything = supplements.length > 0 || todayWorkouts.length > 0;
 
@@ -420,7 +399,7 @@ export default function CalendarScreen({ navigation }: Props) {
                           }
                           onDelete={() => confirmDeleteSupplement(sup)}
                           colors={colors}
-                          linkedNames={getLinkedNames(sup)}
+                          linkedNames={getLinkedNames(sup, supplementNameMap)}
                           doseSources={doseSourceRecord[sup.id]}
                           supplementNames={supplementNameMap}
                           onMoveUp={() => handleMoveSupplement(sup.id, 'weekly', 'up')}
@@ -458,7 +437,7 @@ export default function CalendarScreen({ navigation }: Props) {
                           }
                           onDelete={() => confirmDeleteSupplement(sup)}
                           colors={colors}
-                          linkedNames={getLinkedNames(sup)}
+                          linkedNames={getLinkedNames(sup, supplementNameMap)}
                           doseSources={doseSourceRecord[sup.id]}
                           supplementNames={supplementNameMap}
                           onMoveUp={() => handleMoveSupplement(sup.id, 'daily', 'up')}
@@ -481,7 +460,6 @@ export default function CalendarScreen({ navigation }: Props) {
                         key={workout.id}
                         workout={workout}
                         record={workoutRecord[workout.id]}
-                        onToggle={() => handleToggleWorkout(workout.id)}
                         onSaveNotes={(notes) =>
                           handleSaveWorkoutNotes(workout.id, notes)
                         }

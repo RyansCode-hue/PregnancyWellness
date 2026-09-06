@@ -12,8 +12,14 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
-import { getPregnancyWeek, getDaysUntilDue, createReminder } from '../storage/storage';
-import { RootStackParamList, ReminderConfig, ToggleableTab } from '../types';
+import {
+  getPregnancyWeek,
+  getDaysUntilDue,
+  createReminder,
+  REMINDER_NAME_PLACEHOLDER,
+} from '../storage/storage';
+import { TOGGLEABLE_TABS } from '../navTabs';
+import { RootStackParamList, ReminderConfig } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -303,6 +309,9 @@ function ReminderEditor({
         placeholder="Enter reminder text"
         placeholderTextColor={colors.checkboxEmpty}
       />
+      <Text style={s.stepperCaption}>
+        Write {REMINDER_NAME_PLACEHOLDER} where the name from "Your Name" should appear.
+      </Text>
     </View>
   );
 }
@@ -510,7 +519,7 @@ export default function SettingsScreen({ navigation }: Props) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Your Name</Text>
           <Text style={styles.sectionDesc}>
-            Used in reminder notifications
+            Inserted into reminder messages wherever they say {REMINDER_NAME_PLACEHOLDER}
           </Text>
           <View style={styles.inputRow}>
             <TextInput
@@ -602,7 +611,7 @@ export default function SettingsScreen({ navigation }: Props) {
           <Text style={styles.sectionDesc}>
             Hide tabs you don't use. Settings always stays visible.
           </Text>
-          {(['Calendar', 'Labor', 'Contractions', 'Baby'] as ToggleableTab[]).map((tab) => (
+          {TOGGLEABLE_TABS.map((tab) => (
             <View
               key={tab}
               style={[styles.toggleRow, { marginTop: spacing.sm }]}

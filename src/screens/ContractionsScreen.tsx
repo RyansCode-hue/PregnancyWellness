@@ -56,7 +56,7 @@ function formatTime(iso: string): string {
   return `${h}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
-export default function ContractionsScreen({ navigation }: Props) {
+export default function ContractionsScreen(_props: Props) {
   const { colors, isDark } = useTheme();
   const s = makeStyles(colors);
 
@@ -127,7 +127,7 @@ export default function ContractionsScreen({ navigation }: Props) {
     );
   };
 
-  // Stage estimate over the last 5 completed contractions.
+  // Stage estimate over the last 4 completed contractions.
   const estimate = estimateLaborStage(contractions);
 
   // Time since last completed contraction's start (for the idle state caption).

@@ -1,8 +1,12 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
-import { getSupplements, getSupplementsForDate, getDayRecord, formatDate } from './storage/storage';
+import { renderReminderBody } from './storage/storage';
 import { AppSettings } from './types';
+
+// Android channel that reminders post to. Created on permission request; the trigger
+// must name it explicitly or the notification lands on the default channel instead.
+const ANDROID_CHANNEL_ID = 'supplements';
 
 // Configure how notifications appear when app is in foreground
 Notifications.setNotificationHandler({
@@ -22,7 +26,7 @@ export async function requestPermissions(): Promise<boolean> {
   }
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('supplements', {
+    await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
       name: 'Supplement Reminders',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
@@ -61,38 +65,15 @@ export async function scheduleReminders(settings: AppSettings): Promise<void> {
     await Notifications.scheduleNotificationAsync({
       content: {
         title: reminder.title || 'Reminder',
-        body: reminder.body,
+        body: renderReminderBody(reminder.body, settings.partnerName),
         data: { reminderId: reminder.id },
       },
       trigger: {
         type: Notifications.SchedulableTriggerInputTypes.DAILY,
         hour: clampHour(reminder.hour),
         minute: clampMinute(reminder.minute),
+        channelId: Platform.OS === 'android' ? ANDROID_CHANNEL_ID : undefined,
       },
     });
   }
-}
-
-// Generate a detailed notification body listing what's needed
-export async function getMissedSupplementsList(): Promise<string> {
-  const todayStr = formatDate(new Date());
-  const allSupplements = await getSupplements();
-  const todaySupplements = getSupplementsForDate(allSupplements, todayStr);
-  const record = await getDayRecord(todayStr);
-
-  const missed: string[] = [];
-
-  for (const sup of todaySupplements) {
-    const doses = record[sup.id] || new Array(sup.dosesPerDay).fill(false);
-    const remaining = sup.dosesPerDay - doses.filter(Boolean).length;
-    if (remaining > 0) {
-      missed.push(`${sup.name} (${remaining} remaining)`);
-    }
-  }
-
-  if (missed.length === 0) {
-    return 'All supplements taken today! Great job!';
-  }
-
-  return `Still need: ${missed.join(', ')}`;
 }
