@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
   getWorkoutDayTarget,
 } from '../storage/storage';
 import { CheckIcon, NotesIcon, ChevronUpIcon } from './Icons';
+import ReorderColumn from './ReorderColumn';
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -73,7 +74,7 @@ export default function WorkoutCard({
   canMoveUp,
   canMoveDown,
 }: WorkoutCardProps) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const todaySessions = getWorkoutSessions(record);
   const [showNotes, setShowNotes] = useState(false);
   const [notes, setNotes] = useState(record?.notes || '');
@@ -148,7 +149,6 @@ export default function WorkoutCard({
     </View>
   );
 
-  const showMoveButtons = !!(onMoveUp || onMoveDown);
 
   return (
     <Swipeable
@@ -250,28 +250,14 @@ export default function WorkoutCard({
       )}
       </View>
 
-      {showMoveButtons && (
-        <View style={s.moveCol}>
-          <TouchableOpacity
-            style={[s.moveBtn, !canMoveUp && s.moveBtnDisabled]}
-            onPress={onMoveUp}
-            disabled={!canMoveUp || !onMoveUp}
-            activeOpacity={0.5}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-          >
-            <Text style={[s.moveArrow, !canMoveUp && s.moveArrowDisabled]}>▲</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.moveBtn, !canMoveDown && s.moveBtnDisabled]}
-            onPress={onMoveDown}
-            disabled={!canMoveDown || !onMoveDown}
-            activeOpacity={0.5}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-          >
-            <Text style={[s.moveArrow, !canMoveDown && s.moveArrowDisabled]}>▼</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      <ReorderColumn
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        colors={colors}
+        accentColor={'#F59E0B'}
+      />
       </View>
     </Swipeable>
   );
@@ -300,33 +286,6 @@ function makeStyles(colors: ThemeColors) {
     },
     cardBody: {
       flex: 1,
-    },
-    // Right-side reorder column. Two stacked arrow buttons, vertically distributed.
-    moveCol: {
-      width: 32,
-      marginLeft: spacing.sm,
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingVertical: 2,
-    },
-    moveBtn: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: borderRadius.sm,
-    },
-    moveBtnDisabled: {
-      opacity: 0.35,
-    },
-    moveArrow: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: '#F59E0B',
-      lineHeight: 16,
-    },
-    moveArrowDisabled: {
-      color: colors.textSubtle,
     },
     topRow: {
       flexDirection: 'row',

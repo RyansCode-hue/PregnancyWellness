@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -28,7 +28,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AddEditSupplement'>;
 
 export default function AddEditSupplementScreen({ route, navigation }: Props) {
   const { colors } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const existing = route.params?.supplement;
   const isEditing = !!existing;
 

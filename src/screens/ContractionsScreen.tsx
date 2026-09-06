@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -58,7 +58,7 @@ function formatTime(iso: string): string {
 
 export default function ContractionsScreen(_props: Props) {
   const { colors, isDark } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [contractions, setContractions] = useState<Contraction[]>([]);
   const [tickNow, setTickNow] = useState(Date.now());
@@ -272,7 +272,7 @@ function ContractionRow({
   colors: ThemeColors;
   onDelete: (id: string) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const swipeableRef = useRef<Swipeable>(null);
 
   const renderRightActions = () => (

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, StatusBar } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -42,7 +42,7 @@ export default function AppHeader({ activeRoute }: AppHeaderProps) {
   const { colors, settings } = useTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   // Visible left-to-right tab list, derived from the user's settings.
   const tabs = getEnabledTabs(settings.enabledTabs);
@@ -118,7 +118,7 @@ function NavButton({
   children: React.ReactNode;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   return (
     <TouchableOpacity
       style={[s.navButton, active && s.navButtonActive]}

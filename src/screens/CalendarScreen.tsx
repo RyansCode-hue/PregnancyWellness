@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -62,7 +62,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Calendar'>;
 
 export default function CalendarScreen({ navigation }: Props) {
   const { colors, isDark, settings } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const today = new Date();
   const todayStr = formatDate(today);

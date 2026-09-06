@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { useTheme } from '../ThemeContext';
+import TimeStepper from '../components/TimeStepper';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import {
   getFeedings,
@@ -99,7 +100,7 @@ const DIAPER_LABEL: Record<DiaperKind, string> = { wet: 'Wet', dirty: 'Dirty', b
 
 export default function BabyScreen(_props: Props) {
   const { colors, isDark } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [feedings, setFeedings] = useState<FeedingSession[]>([]);
   const [sleeps, setSleeps] = useState<SleepSession[]>([]);
@@ -517,7 +518,7 @@ function Pill({
   onPress: () => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -529,14 +530,12 @@ function Pill({
   );
 }
 
-// ─── TimeStepper ─────────────────────────────────────────────────────────
-// Compact hour/min/AM-PM stepper plus a Today/Yesterday toggle. Mirrors the
-// pattern used by ReminderEditor in SettingsScreen but stays local to this
-// screen since the form is only used here.
+// ─── DayTimeStepper ──────────────────────────────────────────────────────
+// Shared hour/minute/AM-PM stepper plus a Today/Yesterday toggle.
 
 type TimeValue = { hour: number; minute: number; dayOffset: 0 | -1 };
 
-function TimeStepper({
+function DayTimeStepper({
   label,
   value,
   onChange,
@@ -547,42 +546,15 @@ function TimeStepper({
   onChange: (v: TimeValue) => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
-  const isPM = value.hour >= 12;
-  const hour12 = ((value.hour + 11) % 12) + 1;
-
-  const to24 = (h12: number, pm: boolean): number => {
-    const base = h12 % 12;
-    return pm ? base + 12 : base;
-  };
-  const bumpHour = (delta: number) => {
-    const nextH12 = ((hour12 - 1 + delta + 12) % 12) + 1;
-    onChange({ ...value, hour: to24(nextH12, isPM) });
-  };
-  const toggleAmPm = () => onChange({ ...value, hour: (value.hour + 12) % 24 });
-  const bumpMinute = (delta: number) => {
-    const next = ((value.minute + delta) % 60 + 60) % 60;
-    onChange({ ...value, minute: next });
-  };
-
+  const s = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={s.stepperWrap}>
       <Text style={s.stepperLabel}>{label}</Text>
-      <View style={s.stepperRow}>
-        <Stepper value={hour12} onMinus={() => bumpHour(-1)} onPlus={() => bumpHour(1)} colors={colors} />
-        <Text style={s.stepperColon}>:</Text>
-        <Stepper
-          value={String(value.minute).padStart(2, '0')}
-          onMinus={() => bumpMinute(-5)}
-          onPlus={() => bumpMinute(5)}
-          colors={colors}
-        />
-        <TouchableOpacity style={s.ampmBtn} onPress={toggleAmPm} activeOpacity={0.7}>
-          <Text style={[s.ampmText, !isPM && s.ampmTextActive]}>AM</Text>
-          <Text style={s.ampmDivider}>·</Text>
-          <Text style={[s.ampmText, isPM && s.ampmTextActive]}>PM</Text>
-        </TouchableOpacity>
-      </View>
+      <TimeStepper
+        value={value}
+        onChange={(t) => onChange({ ...value, ...t })}
+        colors={colors}
+      />
       <View style={s.dayToggle}>
         <TouchableOpacity
           style={[s.dayBtn, value.dayOffset === 0 && s.dayBtnActive]}
@@ -599,31 +571,6 @@ function TimeStepper({
           <Text style={[s.dayText, value.dayOffset === -1 && s.dayTextActive]}>Yesterday</Text>
         </TouchableOpacity>
       </View>
-    </View>
-  );
-}
-
-function Stepper({
-  value,
-  onMinus,
-  onPlus,
-  colors,
-}: {
-  value: number | string;
-  onMinus: () => void;
-  onPlus: () => void;
-  colors: ThemeColors;
-}) {
-  const s = makeStyles(colors);
-  return (
-    <View style={s.stepperGroup}>
-      <TouchableOpacity style={s.stepBtn} onPress={onMinus} activeOpacity={0.7}>
-        <Text style={s.stepBtnText}>−</Text>
-      </TouchableOpacity>
-      <Text style={s.stepValue}>{value}</Text>
-      <TouchableOpacity style={s.stepBtn} onPress={onPlus} activeOpacity={0.7}>
-        <Text style={s.stepBtnText}>+</Text>
-      </TouchableOpacity>
     </View>
   );
 }
@@ -661,7 +608,7 @@ function ManualFeedingForm({
   onSubmit: (entry: ManualFeedEntry) => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const [open, setOpen] = useState(false);
   const [startTime, setStartTime] = useState<TimeValue>(defaultNow);
   const [endTime, setEndTime] = useState<TimeValue>(defaultNow);
@@ -714,8 +661,8 @@ function ManualFeedingForm({
     <View style={s.manualForm}>
       {mode === 'breast' ? (
         <>
-          <TimeStepper label="Start" value={startTime} onChange={setStartTime} colors={colors} />
-          <TimeStepper label="End" value={endTime} onChange={setEndTime} colors={colors} />
+          <DayTimeStepper label="Start" value={startTime} onChange={setStartTime} colors={colors} />
+          <DayTimeStepper label="End" value={endTime} onChange={setEndTime} colors={colors} />
           <Text style={s.fieldLabel}>Side</Text>
           <View style={s.pillRow}>
             {(['left', 'right', 'both'] as FeedSide[]).map((sd) => (
@@ -759,7 +706,7 @@ function ManualFeedingForm({
         </>
       ) : (
         <>
-          <TimeStepper label="Time" value={startTime} onChange={setStartTime} colors={colors} />
+          <DayTimeStepper label="Time" value={startTime} onChange={setStartTime} colors={colors} />
           <Text style={s.fieldLabel}>Amount</Text>
           <View style={s.amountRow}>
             <TextInput
@@ -816,7 +763,7 @@ function ManualSleepForm({
   onSubmit: (start: string, end: string) => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const [open, setOpen] = useState(false);
   // Sleep often starts the previous day, so default start = yesterday for ergonomics.
   const [startTime, setStartTime] = useState<TimeValue>(() => ({
@@ -850,8 +797,8 @@ function ManualSleepForm({
 
   return (
     <View style={s.manualForm}>
-      <TimeStepper label="Start" value={startTime} onChange={setStartTime} colors={colors} />
-      <TimeStepper label="End" value={endTime} onChange={setEndTime} colors={colors} />
+      <DayTimeStepper label="Start" value={startTime} onChange={setStartTime} colors={colors} />
+      <DayTimeStepper label="End" value={endTime} onChange={setEndTime} colors={colors} />
       <View style={s.formActions}>
         <TouchableOpacity
           style={[s.formBtn, s.formBtnSecondary]}
@@ -881,7 +828,7 @@ function ManualDiaperForm({
   onSubmit: (kind: DiaperKind, time: string) => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const [open, setOpen] = useState(false);
   const [time, setTime] = useState<TimeValue>(defaultNow);
   const [kind, setKind] = useState<DiaperKind>('wet');
@@ -917,7 +864,7 @@ function ManualDiaperForm({
           />
         ))}
       </View>
-      <TimeStepper label="Time" value={time} onChange={setTime} colors={colors} />
+      <DayTimeStepper label="Time" value={time} onChange={setTime} colors={colors} />
       <View style={s.formActions}>
         <TouchableOpacity
           style={[s.formBtn, s.formBtnSecondary]}
@@ -949,7 +896,7 @@ function SwipeRow({
   onDelete: () => void;
   colors: ThemeColors;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const swipeableRef = useRef<Swipeable>(null);
   return (
     <Swipeable
@@ -984,7 +931,7 @@ function FeedingRow({
   colors: ThemeColors;
   onDelete: (id: string) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const meta: string[] = [];
   if (feeding.type === 'breast') {
     if (feeding.side) meta.push(SIDE_LABEL[feeding.side]);
@@ -1030,7 +977,7 @@ function SleepRow({
   colors: ThemeColors;
   onDelete: (id: string) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const elapsedSec = sleep.end
     ? durationSeconds(sleep.start, sleep.end)
     : Math.floor((tickNow - new Date(sleep.start).getTime()) / 1000);
@@ -1059,7 +1006,7 @@ function DiaperRow({
   colors: ThemeColors;
   onDelete: (id: string) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const day = formatRelativeDay(diaper.time);
   return (
     <SwipeRow onDelete={() => onDelete(diaper.id)} colors={colors}>
@@ -1330,67 +1277,6 @@ function makeStyles(colors: ThemeColors) {
       textTransform: 'uppercase',
       letterSpacing: 0.5,
       marginBottom: spacing.xs,
-    },
-    stepperRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-    },
-    stepperGroup: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: colors.card,
-      borderRadius: borderRadius.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      paddingHorizontal: 2,
-    },
-    stepBtn: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    stepBtnText: {
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.primary,
-    },
-    stepValue: {
-      minWidth: 28,
-      textAlign: 'center',
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    stepperColon: {
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.text,
-      marginHorizontal: 2,
-    },
-    ampmBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.sm - 2,
-      backgroundColor: colors.card,
-      borderRadius: borderRadius.sm,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      marginLeft: spacing.xs,
-    },
-    ampmText: {
-      fontSize: fontSize.sm,
-      fontWeight: '700',
-      color: colors.textSubtle,
-    },
-    ampmTextActive: {
-      color: colors.primary,
-    },
-    ampmDivider: {
-      marginHorizontal: 4,
-      color: colors.textSubtle,
     },
     dayToggle: {
       flexDirection: 'row',

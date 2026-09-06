@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -46,7 +46,7 @@ export function extractYouTubeId(url: string): string | null {
 
 export default function VideoModal({ visible, videoUrl, onClose }: VideoModalProps) {
   const { colors } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const ytId = videoUrl ? extractYouTubeId(videoUrl) : null;
 
   // Non-YouTube URL → fall back to the system browser instead of embedding.

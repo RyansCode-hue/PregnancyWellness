@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useTheme } from '../ThemeContext';
+import TimeStepper from '../components/TimeStepper';
 import { spacing, fontSize, borderRadius, ThemeColors } from '../theme';
 import {
   getPregnancyWeek,
@@ -75,7 +76,7 @@ function MiniCalendarPicker({
     rows[rows.length - 1].push(null);
   }
 
-  const s = calendarPickerStyles(colors);
+  const s = useMemo(() => calendarPickerStyles(colors), [colors]);
 
   return (
     <View style={s.container}>
@@ -195,7 +196,7 @@ function ReminderEditor({
   onDelete: () => void;
   colors: ThemeColors;
 }) {
-  const s = reminderEditorStyles(colors);
+  const s = useMemo(() => reminderEditorStyles(colors), [colors]);
   const [titleDraft, setTitleDraft] = useState(config.title);
   const [bodyDraft, setBodyDraft] = useState(config.body);
 
@@ -207,30 +208,8 @@ function ReminderEditor({
     setBodyDraft(config.body);
   }, [config.body]);
 
-  const isPM = config.hour >= 12;
-  const hour12 = ((config.hour + 11) % 12) + 1; // 1..12
-
-  // Convert a 12-hour value (1..12) + AM/PM back to 0..23
-  const to24 = (h12: number, pm: boolean): number => {
-    const base = h12 % 12; // 12 → 0, 1..11 → 1..11
-    return pm ? base + 12 : base;
-  };
-
-  const bumpHour = (delta: number) => {
-    // Cycle 1..12, preserving AM/PM
-    const nextH12 = ((hour12 - 1 + delta + 12) % 12) + 1;
-    onChange({ ...config, hour: to24(nextH12, isPM) });
-  };
-  const toggleAmPm = () => {
-    onChange({ ...config, hour: (config.hour + 12) % 24 });
-  };
-  const bumpMinute = (delta: number) => {
-    // Step by 5 minutes for ergonomics; only affects minute (don't roll into hour)
-    const next = ((config.minute + delta) % 60 + 60) % 60;
-    onChange({ ...config, minute: next });
-  };
-
   return (
+
     <View style={s.container}>
       <View style={s.headerRow}>
         <Text style={s.label}>{config.title || 'Reminder'}</Text>
@@ -239,38 +218,11 @@ function ReminderEditor({
         </TouchableOpacity>
       </View>
       <View style={s.timeRow}>
-        <View style={s.stepperGroup}>
-          <Text style={s.stepperCaption}>Hour</Text>
-          <View style={s.stepperRow}>
-            <TouchableOpacity style={s.stepBtn} onPress={() => bumpHour(-1)} activeOpacity={0.7}>
-              <Text style={s.stepBtnText}>−</Text>
-            </TouchableOpacity>
-            <Text style={s.stepValue}>{hour12}</Text>
-            <TouchableOpacity style={s.stepBtn} onPress={() => bumpHour(1)} activeOpacity={0.7}>
-              <Text style={s.stepBtnText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={s.stepperGroup}>
-          <Text style={s.stepperCaption}>Minute</Text>
-          <View style={s.stepperRow}>
-            <TouchableOpacity style={s.stepBtn} onPress={() => bumpMinute(-5)} activeOpacity={0.7}>
-              <Text style={s.stepBtnText}>−</Text>
-            </TouchableOpacity>
-            <Text style={s.stepValue}>{String(config.minute).padStart(2, '0')}</Text>
-            <TouchableOpacity style={s.stepBtn} onPress={() => bumpMinute(5)} activeOpacity={0.7}>
-              <Text style={s.stepBtnText}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-        <View style={s.stepperGroup}>
-          <Text style={s.stepperCaption}>AM/PM</Text>
-          <TouchableOpacity style={s.ampmToggle} onPress={toggleAmPm} activeOpacity={0.7}>
-            <Text style={[s.ampmText, !isPM && s.ampmTextActive]}>AM</Text>
-            <Text style={s.ampmDivider}>·</Text>
-            <Text style={[s.ampmText, isPM && s.ampmTextActive]}>PM</Text>
-          </TouchableOpacity>
-        </View>
+        <TimeStepper
+          value={{ hour: config.hour, minute: config.minute }}
+          onChange={(t) => onChange({ ...config, ...t })}
+          colors={colors}
+        />
         <View style={s.previewBox}>
           <Text style={s.previewTime}>{formatTime(config.hour, config.minute)}</Text>
         </View>
@@ -355,70 +307,14 @@ function reminderEditorStyles(colors: ThemeColors) {
     },
     timeRow: {
       flexDirection: 'row',
-      alignItems: 'flex-end',
-      gap: spacing.sm,
-    },
-    stepperGroup: {
       alignItems: 'center',
+      gap: spacing.sm,
     },
     stepperCaption: {
       fontSize: fontSize.sm,
       color: colors.textSubtle,
       fontWeight: '600',
       marginBottom: 4,
-    },
-    stepperRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.xs,
-    },
-    stepBtn: {
-      width: 36,
-      height: 36,
-      borderRadius: borderRadius.sm,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      backgroundColor: colors.background,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    stepBtnText: {
-      fontSize: 20,
-      fontWeight: '700',
-      color: colors.primary,
-      lineHeight: 22,
-    },
-    stepValue: {
-      fontSize: fontSize.lg,
-      fontWeight: '700',
-      color: colors.text,
-      minWidth: 32,
-      textAlign: 'center',
-    },
-    ampmToggle: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      height: 36,
-      paddingHorizontal: spacing.sm,
-      borderRadius: borderRadius.sm,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      backgroundColor: colors.background,
-    },
-    ampmText: {
-      fontSize: fontSize.md,
-      fontWeight: '600',
-      color: colors.checkboxEmpty,
-    },
-    ampmTextActive: {
-      color: colors.primary,
-      fontWeight: '800',
-    },
-    ampmDivider: {
-      color: colors.checkboxEmpty,
-      fontWeight: '700',
     },
     previewBox: {
       flex: 1,
@@ -458,7 +354,7 @@ function reminderEditorStyles(colors: ThemeColors) {
 
 export default function SettingsScreen({ navigation }: Props) {
   const { colors, isDark, toggleDarkMode, settings, updateSettings } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [nameInput, setNameInput] = useState(settings.partnerName || '');
   const [showDatePicker, setShowDatePicker] = useState(false);

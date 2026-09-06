@@ -18,6 +18,18 @@ const FEEDINGS_KEY = 'baby_feedings';
 const SLEEPS_KEY = 'baby_sleeps';
 const DIAPERS_KEY = 'baby_diapers';
 
+// Read many JSON records in one round trip. Missing keys yield `empty()`; a corrupt
+// value throws, matching the single-key getters.
+async function multiGetJson<T>(keys: string[], empty: () => T): Promise<Record<string, T>> {
+  const out: Record<string, T> = {};
+  if (keys.length === 0) return out;
+  const entries = await AsyncStorage.multiGet(keys);
+  for (const [key, val] of entries) {
+    out[key] = val ? (JSON.parse(val) as T) : empty();
+  }
+  return out;
+}
+
 // ─── Settings ───
 
 function newReminderId(): string {
@@ -266,15 +278,14 @@ export async function getWeeklyProgress(
   const weeklySups = supplements.filter((s) => s.frequency === 'weekly');
   if (weeklySups.length === 0) return { completed: 0, total: 0 };
 
-  const weekDates = getWeekDates(dateStr);
+  const weekRecords = await getDayRecords(getWeekDates(dateStr));
   let totalDoses = 0;
   let completedDoses = 0;
 
   for (const sup of weeklySups) {
     totalDoses += sup.dosesPerDay;
     let supCompleted = 0;
-    for (const ds of weekDates) {
-      const record = await getDayRecord(ds);
+    for (const record of Object.values(weekRecords)) {
       const doses = record[sup.id];
       if (doses) {
         supCompleted += doses.filter(Boolean).length;
@@ -476,18 +487,21 @@ export async function getLastCompletedWorkoutDates(
   return result;
 }
 
+function sumSessions(records: Record<string, WorkoutDayRecord>, workoutId: string): number {
+  let count = 0;
+  for (const record of Object.values(records)) {
+    count += getWorkoutSessions(record[workoutId]);
+  }
+  return count;
+}
+
 // Sum sessions across the week (Mon-Sun containing dateStr) for a weekly-goal
 // workout. Sessions can stack on the same day.
 export async function getWeeklyWorkoutCount(
   workoutId: string,
   dateStr: string,
 ): Promise<number> {
-  let count = 0;
-  for (const ds of getWeekDates(dateStr)) {
-    const record = await getWorkoutDayRecord(ds);
-    count += getWorkoutSessions(record[workoutId]);
-  }
-  return count;
+  return sumSessions(await getWorkoutDayRecords(getWeekDates(dateStr)), workoutId);
 }
 
 // Week session counts keyed by workout id, for the weekly-goal workouts in `workouts`.
@@ -495,12 +509,11 @@ export async function getWeeklyWorkoutCounts(
   workouts: Workout[],
   dateStr: string,
 ): Promise<Record<string, number>> {
+  const goalWorkouts = workouts.filter((w) => w.frequency === 'weekly');
   const counts: Record<string, number> = {};
-  for (const w of workouts) {
-    if (w.frequency === 'weekly') {
-      counts[w.id] = await getWeeklyWorkoutCount(w.id, dateStr);
-    }
-  }
+  if (goalWorkouts.length === 0) return counts;
+  const weekRecords = await getWorkoutDayRecords(getWeekDates(dateStr));
+  for (const w of goalWorkouts) counts[w.id] = sumSessions(weekRecords, w.id);
   return counts;
 }
 
@@ -513,6 +526,16 @@ function workoutDayKey(date: string): string {
 export async function getWorkoutDayRecord(date: string): Promise<WorkoutDayRecord> {
   const json = await AsyncStorage.getItem(workoutDayKey(date));
   return json ? JSON.parse(json) : {};
+}
+
+// Records for many dates in one read, keyed by date (every requested date is present).
+export async function getWorkoutDayRecords(
+  dates: string[],
+): Promise<Record<string, WorkoutDayRecord>> {
+  const byKey = await multiGetJson<WorkoutDayRecord>(dates.map(workoutDayKey), () => ({}));
+  const out: Record<string, WorkoutDayRecord> = {};
+  for (const d of dates) out[d] = byKey[workoutDayKey(d)] ?? {};
+  return out;
 }
 
 export async function saveWorkoutDayRecord(
@@ -579,6 +602,14 @@ export async function getDayRecord(date: string): Promise<DayRecord> {
   return json ? JSON.parse(json) : {};
 }
 
+// Records for many dates in one read, keyed by date (every requested date is present).
+export async function getDayRecords(dates: string[]): Promise<Record<string, DayRecord>> {
+  const byKey = await multiGetJson<DayRecord>(dates.map(dayKey), () => ({}));
+  const out: Record<string, DayRecord> = {};
+  for (const d of dates) out[d] = byKey[dayKey(d)] ?? {};
+  return out;
+}
+
 export async function saveDayRecord(date: string, record: DayRecord): Promise<void> {
   await AsyncStorage.setItem(dayKey(date), JSON.stringify(record));
 }
@@ -592,6 +623,13 @@ function doseSourceKey(date: string): string {
 export async function getDoseSourceRecord(date: string): Promise<DoseSourceRecord> {
   const json = await AsyncStorage.getItem(doseSourceKey(date));
   return json ? JSON.parse(json) : {};
+}
+
+async function getDoseSourceRecords(dates: string[]): Promise<Record<string, DoseSourceRecord>> {
+  const byKey = await multiGetJson<DoseSourceRecord>(dates.map(doseSourceKey), () => ({}));
+  const out: Record<string, DoseSourceRecord> = {};
+  for (const d of dates) out[d] = byKey[doseSourceKey(d)] ?? {};
+  return out;
 }
 
 export async function saveDoseSourceRecord(date: string, record: DoseSourceRecord): Promise<void> {
@@ -656,16 +694,17 @@ export interface DayCombinedStatus {
   workout: DayStatusType;
 }
 
-export async function getDayCombinedStatus(
+export function computeDayCombinedStatus(
   date: string,
   supplements: Supplement[],
   workouts: Workout[],
-): Promise<DayCombinedStatus> {
+  record: DayRecord,
+  workoutRecord: WorkoutDayRecord,
+): DayCombinedStatus {
   // Supplement status — only track daily supplements per-day on calendar
   const dailySups = supplements.filter((s) => s.frequency === 'daily');
   let supStatus: DayStatusType = 'none';
   if (dailySups.length > 0) {
-    const record = await getDayRecord(date);
     let allComplete = true;
     for (const sup of dailySups) {
       const doses = record[sup.id];
@@ -687,11 +726,6 @@ export async function getDayCombinedStatus(
   const goalWorkouts = workouts.filter((w) => w.frequency === 'weekly');
 
   let workoutStatus: DayStatusType = 'none';
-  const workoutRecord =
-    dayAssigned.length > 0 || goalWorkouts.length > 0
-      ? await getWorkoutDayRecord(date)
-      : {};
-
   if (dayAssigned.length > 0) {
     let allComplete = true;
     for (const workout of dayAssigned) {
@@ -721,16 +755,24 @@ export async function getMonthStatuses(
   workouts: Workout[],
 ): Promise<Record<string, DayCombinedStatus>> {
   const statuses: Record<string, DayCombinedStatus> = {};
-  const today = new Date();
-  const todayStr = formatDate(today);
+  const todayStr = formatDate(new Date());
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
+  const dates: string[] = [];
   for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(year, month, day);
-    const dateStr = formatDate(date);
-    if (dateStr <= todayStr) {
-      statuses[dateStr] = await getDayCombinedStatus(dateStr, supplements, workouts);
-    }
+    const dateStr = formatDate(new Date(year, month, day));
+    if (dateStr <= todayStr) dates.push(dateStr);
+  }
+  const dayRecords = await getDayRecords(dates);
+  const workoutRecords = await getWorkoutDayRecords(dates);
+  for (const dateStr of dates) {
+    statuses[dateStr] = computeDayCombinedStatus(
+      dateStr,
+      supplements,
+      workouts,
+      dayRecords[dateStr],
+      workoutRecords[dateStr],
+    );
   }
 
   return statuses;
@@ -782,9 +824,8 @@ export async function getWeeklySupplementDoses(
   }
 
   // Scan all 7 days and merge checked doses
-  for (const ds of getWeekDates(dateStr)) {
-    const record = await getDayRecord(ds);
-
+  const weekRecords = await getDayRecords(getWeekDates(dateStr));
+  for (const record of Object.values(weekRecords)) {
     for (const sup of weeklySups) {
       const doses = record[sup.id];
       if (doses) {
@@ -865,18 +906,16 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
 
   const supItems: WeeklyReportSupItem[] = [];
 
-  // Pre-load day records and dose source records for all 7 days
-  const dayRecords: { date: string; record: DayRecord; sources: DoseSourceRecord }[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(startDate);
-    d.setDate(startDate.getDate() + i);
-    const ds = formatDate(d);
-    dayRecords.push({
-      date: ds,
-      record: await getDayRecord(ds),
-      sources: await getDoseSourceRecord(ds),
-    });
-  }
+  // Pre-load day records, dose source records and workout records for all 7 days
+  const weekDates = getWeekDates(weekStartDate);
+  const recordsByDate = await getDayRecords(weekDates);
+  const sourcesByDate = await getDoseSourceRecords(weekDates);
+  const workoutRecords = await getWorkoutDayRecords(weekDates);
+  const dayRecords = weekDates.map((date) => ({
+    date,
+    record: recordsByDate[date],
+    sources: sourcesByDate[date],
+  }));
 
   // Process each linked cluster. saveSupplement guarantees a cluster shares one frequency.
   for (const cluster of buildSupplementClusters(supplements)) {
@@ -994,7 +1033,7 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
   for (const workout of workouts) {
     if (workout.frequency === 'weekly') {
       const goal = workout.weeklyGoal ?? 1;
-      const sessions = await getWeeklyWorkoutCount(workout.id, weekStartDate);
+      const sessions = sumSessions(workoutRecords, workout.id);
       workoutItems.push({
         name: workout.name,
         completedDays: Math.min(sessions, goal),
@@ -1004,15 +1043,11 @@ export async function getWeeklyReport(weekStartDate: string): Promise<WeeklyRepo
     } else {
       let completedDays = 0;
       let totalDays = 0;
-      for (let i = 0; i < 7; i++) {
-        const d = new Date(startDate);
-        d.setDate(startDate.getDate() + i);
-        const dayOfWeek = d.getDay();
+      for (const ds of weekDates) {
+        const dayOfWeek = parseDate(ds).getDay();
         if (workout.assignedDays.includes(dayOfWeek as any)) {
           totalDays++;
-          const ds = formatDate(d);
-          const record = await getWorkoutDayRecord(ds);
-          if (isWorkoutDoneOnDay(workout, record[workout.id])) {
+          if (isWorkoutDoneOnDay(workout, workoutRecords[ds][workout.id])) {
             completedDays++;
           }
         }

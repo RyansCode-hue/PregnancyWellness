@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -30,7 +30,7 @@ interface WhenToTakePickerProps {
 
 export default function WhenToTakePicker({ value, onChange }: WhenToTakePickerProps) {
   const { colors } = useTheme();
-  const styles = makeStyles(colors);
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [showCustom, setShowCustom] = useState(
     value !== '' && !PRESETS.includes(value)
   );

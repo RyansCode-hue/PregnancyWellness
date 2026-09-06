@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -83,7 +83,7 @@ function reportError(context: string, err: unknown) {
 export default function DayDetailScreen({ route, navigation }: Props) {
   const { date } = route.params;
   const { colors } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [supplements, setSupplements] = useState<Supplement[]>([]);
   const [dayRecord, setDayRecord] = useState<DayRecord>({});

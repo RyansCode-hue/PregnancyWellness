@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -54,7 +54,7 @@ function weekOverlapsMonth(weekStart: string, year: number, month: number): bool
 
 export default function WeeklyReportScreen({ navigation }: Props) {
   const { colors, isDark } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [allWeeks, setAllWeeks] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);

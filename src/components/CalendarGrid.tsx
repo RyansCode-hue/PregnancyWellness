@@ -64,7 +64,7 @@ export default function CalendarGrid({
   colors,
 }: CalendarGridProps) {
   const todayStr = formatDate(new Date());
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const weeks = useMemo(() => {
     const firstDay = new Date(year, month, 1).getDay();

@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -53,7 +53,7 @@ function isUntaggedComfort(item: LaborItem): boolean {
 
 export default function LaborScreen({ navigation }: Props) {
   const { colors, isDark } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
 
   const [items, setItems] = useState<LaborItem[]>([]);
   const [activeVideo, setActiveVideo] = useState<string | null>(null);
@@ -251,7 +251,7 @@ function CollapsibleSection({
   emptyMessage?: string;
   children?: React.ReactNode;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={s.stageWrap}>
       <TouchableOpacity
@@ -300,7 +300,7 @@ function CategoryBlock({
   onEdit: (item: LaborItem) => void;
   onDelete: (item: LaborItem) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   return (
     <View style={s.categoryBlock}>
       <View style={[s.categoryHeader, { borderLeftColor: color }]}>
@@ -333,7 +333,7 @@ function LaborCard({
   onEdit: (item: LaborItem) => void;
   onDelete: (item: LaborItem) => void;
 }) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const swipeableRef = useRef<Swipeable>(null);
   const close = () => swipeableRef.current?.close();
 

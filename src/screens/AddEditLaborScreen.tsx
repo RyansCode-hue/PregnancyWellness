@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -36,7 +36,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AddEditLabor'>;
 
 export default function AddEditLaborScreen({ route, navigation }: Props) {
   const { colors } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const existing = route.params?.item;
   const isEditing = !!existing;
 

@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import { Swipeable, RectButton } from 'react-native-gesture-handler';
 import { ThemeColors, spacing, fontSize, borderRadius } from '../theme';
 import { Supplement } from '../types';
 import { CheckIcon } from './Icons';
+import ReorderColumn from './ReorderColumn';
 
 interface SupplementCardProps {
   supplement: Supplement;
@@ -45,7 +46,7 @@ export default function SupplementCard({
   canMoveUp,
   canMoveDown,
 }: SupplementCardProps) {
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const completedCount = doses.filter(Boolean).length;
   const allDone = completedCount === supplement.dosesPerDay;
   const swipeableRef = useRef<Swipeable>(null);
@@ -87,7 +88,6 @@ export default function SupplementCard({
     </View>
   );
 
-  const showMoveButtons = !!(onMoveUp || onMoveDown);
 
   return (
     <Swipeable
@@ -152,28 +152,14 @@ export default function SupplementCard({
         )}
       </View>
 
-      {showMoveButtons && (
-        <View style={s.moveCol}>
-          <TouchableOpacity
-            style={[s.moveBtn, !canMoveUp && s.moveBtnDisabled]}
-            onPress={onMoveUp}
-            disabled={!canMoveUp || !onMoveUp}
-            activeOpacity={0.5}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-          >
-            <Text style={[s.moveArrow, !canMoveUp && s.moveArrowDisabled]}>▲</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.moveBtn, !canMoveDown && s.moveBtnDisabled]}
-            onPress={onMoveDown}
-            disabled={!canMoveDown || !onMoveDown}
-            activeOpacity={0.5}
-            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-          >
-            <Text style={[s.moveArrow, !canMoveDown && s.moveArrowDisabled]}>▼</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      <ReorderColumn
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        canMoveUp={canMoveUp}
+        canMoveDown={canMoveDown}
+        colors={colors}
+        accentColor={colors.primary}
+      />
     </View>
     </Swipeable>
   );
@@ -202,33 +188,6 @@ function makeStyles(colors: ThemeColors) {
     },
     cardBody: {
       flex: 1,
-    },
-    // Right-side reorder column. Two stacked arrow buttons, vertically distributed.
-    moveCol: {
-      width: 32,
-      marginLeft: spacing.sm,
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingVertical: 2,
-    },
-    moveBtn: {
-      width: 32,
-      height: 32,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: borderRadius.sm,
-    },
-    moveBtnDisabled: {
-      opacity: 0.35,
-    },
-    moveArrow: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: colors.primary,
-      lineHeight: 16,
-    },
-    moveArrowDisabled: {
-      color: colors.textSubtle,
     },
     headerRow: {
       flexDirection: 'row',

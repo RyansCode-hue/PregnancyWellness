@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -26,7 +26,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'AddEditWorkout'>;
 
 export default function AddEditWorkoutScreen({ route, navigation }: Props) {
   const { colors } = useTheme();
-  const s = makeStyles(colors);
+  const s = useMemo(() => makeStyles(colors), [colors]);
   const existing = route.params?.workout;
   const isEditing = !!existing;
 

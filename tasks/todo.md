@@ -39,7 +39,8 @@
 - Storage logic exercised against a mocked AsyncStorage (week helpers, DST-safe day math,
   session counting for both workout frequencies, calendar status, weekly report, cross-frequency
   link rejection, display-vs-stored day record, reminder placeholder + legacy body migration).
-- Not done (perf only, no behaviour change): memoizing `makeStyles`, batching per-day
-  AsyncStorage reads with `multiGet`, extracting the duplicated reorder column / time stepper UI.
-- Known quirk left as-is: a weekly supplement dose checked on one day cannot be unchecked from
-  a different day of the same week (the tap writes to the current day's record).
+- Follow-up pass: `makeStyles` calls memoized on `colors`; per-day AsyncStorage reads batched
+  through `getDayRecords` / `getWorkoutDayRecords` (calendar month, weekly merges, weekly report);
+  shared `ReorderColumn` and `TimeStepper` components replace the copy-pasted UI.
+- Intentional behaviour (confirmed): a weekly supplement dose checked on one day cannot be
+  unchecked from a different day of the same week.
